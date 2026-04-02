@@ -95,6 +95,7 @@ jobs:
         run: |
           terraform plan \
             -lock-timeout=5m \
+            -var-file=terraform.tfvars \
             -var="functions_runtime_service_account_email=${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}" \
             -var="scheduler_invoker_service_account_email=${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}" \
             -var="line_channel_access_token_secret_id=${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
