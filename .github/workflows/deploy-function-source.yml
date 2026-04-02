@@ -1,0 +1,83 @@
+name: Deploy Function Source
+
+on:
+  pull_request:
+    paths:
+      - 'main.py'
+      - 'requirements.txt'
+      - 'config/**'
+      - 'utils/**'
+      - 'domain/**'
+      - 'infrastructure/**'
+      - 'usecases/**'
+      - '.github/workflows/deploy-function-source.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'main.py'
+      - 'requirements.txt'
+      - 'config/**'
+      - 'utils/**'
+      - 'domain/**'
+      - 'infrastructure/**'
+      - 'usecases/**'
+      - '.github/workflows/deploy-function-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  SOURCE_BUCKET_NAME: ${{ vars.SOURCE_BUCKET_NAME }}
+  FUNCTION_SOURCE_OBJECT: ${{ vars.FUNCTION_SOURCE_OBJECT }}
+
+jobs:
+  package-and-upload:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify target variables
+        run: |
+          test -n "${SOURCE_BUCKET_NAME}"
+          test -n "${FUNCTION_SOURCE_OBJECT}"
+          echo "SOURCE_BUCKET_NAME=${SOURCE_BUCKET_NAME}"
+          echo "FUNCTION_SOURCE_OBJECT=${FUNCTION_SOURCE_OBJECT}"
+
+      - name: Create function source archive
+        run: |
+          rm -f function-source.zip
+          zip -r function-source.zip \
+            main.py \
+            requirements.txt \
+            config \
+            utils \
+            domain \
+            infrastructure \
+            usecases
+
+      - name: Upload archive to GCS
+        uses: google-github-actions/upload-cloud-storage@v2
+        with:
+          path: function-source.zip
+          destination: ${{ env.SOURCE_BUCKET_NAME }}/${{ env.FUNCTION_SOURCE_OBJECT }}
+          parent: false
