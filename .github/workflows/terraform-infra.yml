@@ -1,0 +1,111 @@
+name: Terraform Infra
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-infra.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-infra.yml'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Run terraform apply'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+  TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Terraform plugin cache
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Verify backend variables
+        run: |
+          test -n "${TFSTATE_BUCKET}"
+          echo "TFSTATE_BUCKET=${TFSTATE_BUCKET}"
+
+      - name: Terraform fmt check
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${TFSTATE_BUCKET}"
+
+      - name: Terraform validate
+        working-directory: infra
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        working-directory: infra
+        run: |
+          terraform plan \
+            -lock-timeout=5m \
+            -var="project_id=${GCP_PROJECT_ID}" \
+            -var="region=${GCP_REGION}" \
+            -out=tfplan
+
+      - name: Upload tfplan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/tfplan
+
+      - name: Terraform apply on main push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: infra
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Terraform apply on manual dispatch
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true'
+        working-directory: infra
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan

@@ -3,6 +3,11 @@ output "tfstate_bucket_name" {
   value       = google_storage_bucket.tfstate.name
 }
 
+output "source_bucket_name" {
+  description = "Bucket name for Cloud Function source archives"
+  value       = google_storage_bucket.source.name
+}
+
 output "workload_identity_provider_name" {
   description = "Full Workload Identity Provider resource name"
   value       = google_iam_workload_identity_pool_provider.github_provider.name

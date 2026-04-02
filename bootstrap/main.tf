@@ -22,6 +22,7 @@ locals {
   suffix = random_id.suffix.hex
 
   tfstate_bucket_name = "${var.project_id}-tfstate-${local.suffix}"
+  source_bucket_name  = "${var.project_id}-source-${local.suffix}"
 
   github_actions_sa_account_id = "gha-loto-${local.suffix}"
   functions_runtime_account_id = "loto-fn-runtime-${local.suffix}"
@@ -67,6 +68,26 @@ resource "google_storage_bucket" "tfstate" {
   }
 
   labels = local.common_labels
+
+  depends_on = [google_project_service.services]
+}
+
+#
+# Function source archive bucket
+#
+resource "google_storage_bucket" "source" {
+  name                        = local.source_bucket_name
+  location                    = var.tfstate_location
+  uniform_bucket_level_access = true
+  force_destroy               = false
+
+  versioning {
+    enabled = true
+  }
+
+  labels = merge(local.common_labels, {
+    purpose = "function-source"
+  })
 
   depends_on = [google_project_service.services]
 }
