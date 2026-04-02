@@ -92,6 +92,7 @@ jobs:
             -lock-timeout=5m \
             -var="project_id=${GCP_PROJECT_ID}" \
             -var="region=${GCP_REGION}" \
+            -var-file=terraform.tfvars \
             -out=tfplan
 
       - name: Upload tfplan artifact
