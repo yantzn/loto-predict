@@ -1,0 +1,11 @@
+project_id              = "your-gcp-project-id"
+region                  = "asia-northeast1"
+tfstate_location        = "ASIA"
+
+github_repository       = "your-github-owner/loto-predict-line"
+github_repository_owner = "your-github-owner"
+
+rotation_key            = "v1"
+
+wif_pool_id             = "github-actions-pool"
+wif_provider_id         = "github-actions-provider"

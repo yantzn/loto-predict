@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - gcloud-config:/home/vscode/.config/gcloud
+    working_dir: /workspace
+    command: /bin/sh -c "sudo chown -R vscode:vscode /home/vscode/.config/gcloud || true; while sleep 1000; do :; done"
+    environment:
+      GCP_PROJECT_ID: loto-predict
+
+volumes:
+  gcloud-config:
