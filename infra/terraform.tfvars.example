@@ -8,11 +8,12 @@ runtime        = "python312"
 source_bucket_name = "your-source-bucket-name"
 source_object_name = "functions/loto-orchestrator/function-source.zip"
 
-functions_runtime_service_account_email = "loto-fn-runtime-xxxxxx@your-gcp-project-id.iam.gserviceaccount.com"
-scheduler_invoker_service_account_email = "loto-scheduler-invoker-xxxxxx@your-gcp-project-id.iam.gserviceaccount.com"
 
-line_channel_access_token_secret_id = "LINE_CHANNEL_ACCESS_TOKEN"
-line_user_id_secret_id              = "LINE_USER_ID"
+# 以下の値はGitHub Actionsのシークレットから渡されます
+# functions_runtime_service_account_email = "..."
+# scheduler_invoker_service_account_email = "..."
+# line_channel_access_token_secret_id = "..."
+# line_user_id_secret_id = "..."
 
 app_env      = "prod"
 app_timezone = "Asia/Tokyo"
