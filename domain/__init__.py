@@ -2,37 +2,37 @@ from domain.models import (
     DrawHistory,
     DrawResult,
     LotteryType,
+    NotificationTicket,
+    PredictionNotification,
     PredictionRunRecord,
     PredictionTicket,
-    PredictionNotification,
-    NotificationTicket,
+)
+from domain.prediction import (
+    InvalidScoreError,
+    PredictionConfig,
+    PredictionResult,
+    format_prediction_result,
+    generate_predictions,
 )
 from domain.statistics import (
+    LOTO6_RULE,
+    LOTO7_RULE,
     LotteryRule,
     NumberStatistics,
     StatisticsConfig,
-    calculate_number_statistics,
     build_number_scores,
+    calculate_number_statistics,
     rank_numbers_by_score,
-    LOTO6_RULE,
-    LOTO7_RULE,
-)
-from domain.prediction import (
-    PredictionConfig,
-    PredictionResult,
-    InvalidScoreError,
-    generate_predictions,
-    format_prediction_result,
 )
 
 __all__ = [
     "LotteryType",
-    "DrawResult",
     "DrawHistory",
-    "PredictionRunRecord",
+    "DrawResult",
     "PredictionTicket",
     "NotificationTicket",
     "PredictionNotification",
+    "PredictionRunRecord",
     "LotteryRule",
     "NumberStatistics",
     "StatisticsConfig",
