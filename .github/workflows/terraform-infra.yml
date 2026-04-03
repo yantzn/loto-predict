@@ -1,22 +1,23 @@
 name: Terraform Infra
 
 on:
-  pull_request:
-    paths:
-      - 'infra/**'
-      - '.github/workflows/terraform-infra.yml'
   push:
     branches:
       - main
     paths:
       - 'infra/**'
       - '.github/workflows/terraform-infra.yml'
+  workflow_run:
+    workflows:
+      - Deploy Function Source
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       apply:
         description: 'Run terraform apply'
         required: false
-        default: 'false'
+        default: 'true'
         type: choice
         options:
           - 'false'
@@ -35,9 +36,17 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
+  TFSTATE_PREFIX: ${{ vars.TFSTATE_PREFIX }}
+
+  LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: line_channel_access_token
+  LINE_USER_ID_SECRET_ID: line_user_id
 
 jobs:
   terraform:
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
 
     defaults:
@@ -68,7 +77,9 @@ jobs:
       - name: Verify backend variables
         run: |
           test -n "${TFSTATE_BUCKET}"
-          echo "TFSTATE_BUCKET=${TFSTATE_BUCKET}"
+          test -n "${TFSTATE_PREFIX}"
+          test -n "${GCP_PROJECT_ID}"
+          test -n "${GCP_REGION}"
 
       - name: Terraform fmt check
         working-directory: infra
@@ -78,7 +89,8 @@ jobs:
         working-directory: infra
         run: |
           terraform init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}"
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="prefix=${TFSTATE_PREFIX}"
 
       - name: Terraform validate
         working-directory: infra
@@ -87,19 +99,11 @@ jobs:
       - name: Terraform plan
         id: plan
         working-directory: infra
-        env:
-          FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
-          SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
-          LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID }}
-          LINE_USER_ID_SECRET_ID: ${{ secrets.LINE_USER_ID_SECRET_ID }}
         run: |
           terraform plan \
             -lock-timeout=5m \
-            -var-file=terraform.tfvars \
-            -var="functions_runtime_service_account_email=${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}" \
-            -var="scheduler_invoker_service_account_email=${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}" \
-            -var="line_channel_access_token_secret_id=${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
-            -var="line_user_id_secret_id=${LINE_USER_ID_SECRET_ID}" \
+            -var="project_id=${GCP_PROJECT_ID}" \
+            -var="region=${GCP_REGION}" \
             -out=tfplan
 
       - name: Upload tfplan artifact
@@ -108,8 +112,13 @@ jobs:
           name: tfplan
           path: infra/tfplan
 
-      - name: Terraform apply on main push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Terraform apply on push
+        if: github.event_name == 'push'
+        working-directory: infra
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Terraform apply on workflow_run
+        if: github.event_name == 'workflow_run'
         working-directory: infra
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
@@ -117,3 +126,39 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true'
         working-directory: infra
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Verify target secrets exist
+        if: github.event_name != 'pull_request'
+        run: |
+          gcloud secrets describe "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
+          gcloud secrets describe "${LINE_USER_ID_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
+
+      - name: Sync LINE channel access token to Secret Manager
+        if: github.event_name != 'pull_request'
+        env:
+          SECRET_VALUE: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN_VALUE }}
+        run: |
+          if [ -z "${SECRET_VALUE}" ]; then
+            echo "LINE_CHANNEL_ACCESS_TOKEN_VALUE is empty"
+            exit 1
+          fi
+
+          printf '%s' "${SECRET_VALUE}" | \
+            gcloud secrets versions add "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
+              --project="${GCP_PROJECT_ID}" \
+              --data-file=-
+
+      - name: Sync LINE user id to Secret Manager
+        if: github.event_name != 'pull_request'
+        env:
+          SECRET_VALUE: ${{ secrets.LINE_USER_ID_VALUE }}
+        run: |
+          if [ -z "${SECRET_VALUE}" ]; then
+            echo "LINE_USER_ID_VALUE is empty"
+            exit 1
+          fi
+
+          printf '%s' "${SECRET_VALUE}" | \
+            gcloud secrets versions add "${LINE_USER_ID_SECRET_ID}" \
+              --project="${GCP_PROJECT_ID}" \
+              --data-file=-

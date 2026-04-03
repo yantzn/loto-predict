@@ -15,8 +15,9 @@ source_object_name = "functions/loto-orchestrator/function-source.zip"
 # 以下の値はGitHub Actionsのシークレットから渡されます
 # functions_runtime_service_account_email = "..."
 # scheduler_invoker_service_account_email = "..."
-# line_channel_access_token_secret_id = "..."
-# line_user_id_secret_id = "..."
+
+line_channel_access_token_secret_id = "line_channel_access_token"
+line_user_id_secret_id              = "line_user_id"
 
 app_env      = "prod"
 app_timezone = "Asia/Tokyo"
