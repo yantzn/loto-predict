@@ -103,6 +103,9 @@ jobs:
           FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
           SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
         run: |
+          test -n "${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}"
+          test -n "${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}"
+
           terraform plan \
             -lock-timeout=5m \
             -var="project_id=${GCP_PROJECT_ID}" \
@@ -132,14 +135,12 @@ jobs:
         working-directory: infra
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
-      - name: Verify secrets exist
-        if: github.event_name != 'pull_request'
+      - name: Verify target secrets exist
         run: |
           gcloud secrets describe "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
           gcloud secrets describe "${LINE_USER_ID_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
 
       - name: Sync LINE channel access token
-        if: github.event_name != 'pull_request'
         env:
           SECRET_VALUE: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN_VALUE }}
         run: |
@@ -154,7 +155,6 @@ jobs:
               --data-file=-
 
       - name: Sync LINE user id
-        if: github.event_name != 'pull_request'
         env:
           SECRET_VALUE: ${{ secrets.LINE_USER_ID_VALUE }}
         run: |
@@ -169,7 +169,6 @@ jobs:
               --data-file=-
 
       - name: Show secret versions
-        if: github.event_name != 'pull_request'
         run: |
           gcloud secrets versions list "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
             --project="${GCP_PROJECT_ID}" \

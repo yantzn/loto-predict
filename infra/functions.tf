@@ -1,12 +1,10 @@
-
-
 resource "google_cloudfunctions2_function" "loto_orchestrator" {
   name     = var.function_name
   location = var.region
 
   build_config {
     runtime     = var.runtime
-    entry_point = "main.app"
+    entry_point = "entry_point"
 
     source {
       storage_source {
