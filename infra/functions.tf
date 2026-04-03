@@ -6,7 +6,7 @@ resource "google_cloudfunctions2_function" "loto_orchestrator" {
 
   build_config {
     runtime     = var.runtime
-    entry_point = "entry_point"
+    entry_point = "main.app"
 
     source {
       storage_source {
