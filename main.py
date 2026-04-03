@@ -24,9 +24,6 @@ from usecases.notification_usecase import NotificationUseCase
 from utils.exceptions import AppError, ValidationError
 
 
-def pubsub_entry_point(cloud_event):
-
-
 def _build_usecase() -> LotoPredictionUseCase:
     repository = BigQueryLotoRepository()
     notification_usecase = NotificationUseCase()
