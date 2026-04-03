@@ -1,8 +1,4 @@
-resource "google_storage_bucket_object" "function_source_archive" {
-  name   = var.source_object_name
-  bucket = var.source_bucket_name
-  source = "${path.module}/../function-source.zip"
-}
+
 
 resource "google_cloudfunctions2_function" "loto_orchestrator" {
   name     = var.function_name
@@ -15,7 +11,7 @@ resource "google_cloudfunctions2_function" "loto_orchestrator" {
     source {
       storage_source {
         bucket = var.source_bucket_name
-        object = google_storage_bucket_object.function_source_archive.name
+        object = var.source_object_name
       }
     }
   }

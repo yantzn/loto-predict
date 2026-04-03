@@ -33,7 +33,7 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   SOURCE_BUCKET_NAME: ${{ vars.SOURCE_BUCKET_NAME }}
-  FUNCTION_SOURCE_OBJECT: ${{ vars.FUNCTION_SOURCE_OBJECT }}
+  FUNCTION_SOURCE_OBJECT: functions/function-source.zip
 
 jobs:
   package-and-upload:

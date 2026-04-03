@@ -9,7 +9,7 @@ runtime       = "python312"
 source_bucket_name = "loto-predict-491915-source-6df816"
 
 # GitHub Actions から zip をアップロードする object path
-source_object_name = "functions/loto-orchestrator/function-source.zip"
+source_object_name = "functions/function-source.zip"
 
 
 # 以下の値はGitHub Actionsのシークレットから渡されます

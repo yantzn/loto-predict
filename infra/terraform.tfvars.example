@@ -6,7 +6,7 @@ function_name  = "loto-orchestrator"
 runtime        = "python312"
 
 source_bucket_name = "your-source-bucket-name"
-source_object_name = "functions/loto-orchestrator/function-source.zip"
+source_object_name = "functions/function-source.zip"
 
 
 # 以下の値はGitHub Actionsのシークレットから渡されます

@@ -35,7 +35,7 @@ variable "source_bucket_name" {
 variable "source_object_name" {
   type        = string
   description = "Object path for uploaded function source zip"
-  default     = "functions/loto-orchestrator/function-source.zip"
+  default     = "functions/function-source.zip"
 }
 
 variable "functions_runtime_service_account_email" {
