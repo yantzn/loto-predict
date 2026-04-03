@@ -66,7 +66,7 @@ jobs:
       - name: Create function source archive
         run: |
           rm -f function-source.zip
-          zip -r function-source.zip \
+          zip -r ./function-source.zip \
             main.py \
             requirements.txt \
             config \
@@ -78,6 +78,6 @@ jobs:
       - name: Upload archive to GCS
         uses: google-github-actions/upload-cloud-storage@v2
         with:
-          path: function-source.zip
+          path: ./function-source.zip
           destination: ${{ env.SOURCE_BUCKET_NAME }}/functions/function-source.zip
           parent: false
