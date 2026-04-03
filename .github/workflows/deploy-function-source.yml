@@ -79,5 +79,5 @@ jobs:
         uses: google-github-actions/upload-cloud-storage@v2
         with:
           path: function-source.zip
-          destination: ${{ env.SOURCE_BUCKET_NAME }}/${{ env.FUNCTION_SOURCE_OBJECT }}
+          destination: ${{ env.SOURCE_BUCKET_NAME }}/functions/function-source.zip
           parent: false
