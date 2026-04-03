@@ -36,7 +36,6 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
-  TFSTATE_PREFIX: ${{ vars.TFSTATE_PREFIX }}
 
   LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: line_channel_access_token
   LINE_USER_ID_SECRET_ID: line_user_id
@@ -74,12 +73,14 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Verify backend variables
+      - name: Verify required variables
         run: |
           test -n "${TFSTATE_BUCKET}"
-          test -n "${TFSTATE_PREFIX}"
           test -n "${GCP_PROJECT_ID}"
           test -n "${GCP_REGION}"
+          echo "TFSTATE_BUCKET=${TFSTATE_BUCKET}"
+          echo "GCP_PROJECT_ID=${GCP_PROJECT_ID}"
+          echo "GCP_REGION=${GCP_REGION}"
 
       - name: Terraform fmt check
         working-directory: infra
@@ -89,8 +90,7 @@ jobs:
         working-directory: infra
         run: |
           terraform init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}" \
-            -backend-config="prefix=${TFSTATE_PREFIX}"
+            -backend-config="bucket=${TFSTATE_BUCKET}"
 
       - name: Terraform validate
         working-directory: infra
@@ -112,28 +112,28 @@ jobs:
           name: tfplan
           path: infra/tfplan
 
-      - name: Terraform apply on push
+      - name: Terraform apply (push)
         if: github.event_name == 'push'
         working-directory: infra
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
-      - name: Terraform apply on workflow_run
+      - name: Terraform apply (workflow_run)
         if: github.event_name == 'workflow_run'
         working-directory: infra
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
-      - name: Terraform apply on manual dispatch
+      - name: Terraform apply (manual)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true'
         working-directory: infra
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
 
-      - name: Verify target secrets exist
+      - name: Verify secrets exist
         if: github.event_name != 'pull_request'
         run: |
           gcloud secrets describe "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
           gcloud secrets describe "${LINE_USER_ID_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
 
-      - name: Sync LINE channel access token to Secret Manager
+      - name: Sync LINE channel access token
         if: github.event_name != 'pull_request'
         env:
           SECRET_VALUE: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN_VALUE }}
@@ -148,7 +148,7 @@ jobs:
               --project="${GCP_PROJECT_ID}" \
               --data-file=-
 
-      - name: Sync LINE user id to Secret Manager
+      - name: Sync LINE user id
         if: github.event_name != 'pull_request'
         env:
           SECRET_VALUE: ${{ secrets.LINE_USER_ID_VALUE }}
@@ -162,3 +162,14 @@ jobs:
             gcloud secrets versions add "${LINE_USER_ID_SECRET_ID}" \
               --project="${GCP_PROJECT_ID}" \
               --data-file=-
+
+      - name: Show secret versions
+        if: github.event_name != 'pull_request'
+        run: |
+          gcloud secrets versions list "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
+            --project="${GCP_PROJECT_ID}" \
+            --limit=3
+
+          gcloud secrets versions list "${LINE_USER_ID_SECRET_ID}" \
+            --project="${GCP_PROJECT_ID}" \
+            --limit=3
