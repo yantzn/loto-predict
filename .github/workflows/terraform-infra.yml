@@ -99,11 +99,16 @@ jobs:
       - name: Terraform plan
         id: plan
         working-directory: infra
+        env:
+          FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
+          SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
         run: |
           terraform plan \
             -lock-timeout=5m \
             -var="project_id=${GCP_PROJECT_ID}" \
             -var="region=${GCP_REGION}" \
+            -var="functions_runtime_service_account_email=${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}" \
+            -var="scheduler_invoker_service_account_email=${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}" \
             -out=tfplan
 
       - name: Upload tfplan artifact
