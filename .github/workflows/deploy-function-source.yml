@@ -77,8 +77,5 @@ jobs:
           ls -l function-source.zip
 
       - name: Upload archive to GCS
-        uses: google-github-actions/upload-cloud-storage@v2
-        with:
-          path: function-source.zip
-          destination: ${{ env.SOURCE_BUCKET_NAME }}/functions/function-source.zip
-          parent: false
+        run: |
+          gsutil cp function-source.zip gs://${SOURCE_BUCKET_NAME}/functions/function-source.zip
