@@ -55,4 +55,59 @@ resource "google_cloudfunctions2_function" "loto_orchestrator" {
       version    = "latest"
     }
   }
+
+  depends_on = [
+    google_project_service.services,
+    google_bigquery_dataset.dataset,
+    google_secret_manager_secret.line_channel_access_token,
+    google_secret_manager_secret.line_user_id,
+  ]
+}
+
+resource "google_cloudfunctions2_function" "loto_sync" {
+  name     = "loto-sync"
+  location = var.region
+
+  build_config {
+    runtime     = var.runtime
+    entry_point = "sync_entry_point"
+
+    source {
+      storage_source {
+        bucket = var.source_bucket_name
+        object = var.source_object_name
+      }
+    }
+  }
+
+  service_config {
+    timeout_seconds       = var.function_timeout_seconds
+    available_memory      = var.function_available_memory
+    min_instance_count    = 0
+    max_instance_count    = 1
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = var.functions_runtime_service_account_email
+
+    environment_variables = {
+      APP_ENV          = var.app_env
+      APP_TIMEZONE     = var.app_timezone
+      GCP_PROJECT_ID   = var.project_id
+      GCP_REGION       = var.region
+      BIGQUERY_DATASET = var.dataset_id
+      LOG_LEVEL        = var.log_level
+      LOG_JSON         = var.log_json
+      SERVICE_NAME     = var.service_name
+      LOTO6_NUMBER_MIN = tostring(var.loto6_number_min)
+      LOTO6_NUMBER_MAX = tostring(var.loto6_number_max)
+      LOTO6_PICK_COUNT = tostring(var.loto6_pick_count)
+      LOTO7_NUMBER_MIN = tostring(var.loto7_number_min)
+      LOTO7_NUMBER_MAX = tostring(var.loto7_number_max)
+      LOTO7_PICK_COUNT = tostring(var.loto7_pick_count)
+    }
+  }
+
+  depends_on = [
+    google_project_service.services,
+    google_bigquery_dataset.dataset,
+  ]
 }

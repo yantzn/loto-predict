@@ -5,20 +5,19 @@ from typing import Any
 
 from google.cloud import bigquery
 
-from infrastructure.bigquery_client import BigQueryClient
-from utils.exceptions import ValidationError
-from utils.validators import (
-    validate_no_overlap,
-    validate_number_count,
-    validate_number_range,
-    validate_unique_numbers,
-)
-
 from domain.models import (
     DrawHistory,
     DrawResult,
     LotteryType,
     PredictionRunRecord,
+)
+from infrastructure.bigquery_client import BigQueryClient
+from utils.exceptions import AppError, ValidationError
+from utils.validators import (
+    validate_no_overlap,
+    validate_number_count,
+    validate_number_range,
+    validate_unique_numbers,
 )
 
 
@@ -59,6 +58,42 @@ class BigQueryLotoRepository:
             if rows:
                 self.bq.insert_rows_json(self._table_name(lottery_type), rows)
 
+    def save_draw_results_idempotent(self, draw_results: list[DrawResult]) -> int:
+        """
+        既存 draw_no はスキップし、未登録のみ insert する。
+        """
+        if not draw_results:
+            return 0
+
+        inserted_count = 0
+        grouped: dict[LotteryType, list[DrawResult]] = {
+            LotteryType.LOTO6: [],
+            LotteryType.LOTO7: [],
+        }
+
+        for row in draw_results:
+            self._validate_draw_result(row)
+            grouped[row.lottery_type].append(row)
+
+        for lottery_type, rows in grouped.items():
+            if not rows:
+                continue
+
+            draw_nos = [row.draw_no for row in rows]
+            existing = self._find_existing_draw_nos(lottery_type, draw_nos)
+
+            payload = [
+                self._to_draw_result_row(row)
+                for row in rows
+                if row.draw_no not in existing
+            ]
+
+            if payload:
+                self.bq.insert_rows_json(self._table_name(lottery_type), payload)
+                inserted_count += len(payload)
+
+        return inserted_count
+
     def find_draw_result_by_draw_no(
         self,
         lottery_type: LotteryType,
@@ -80,12 +115,17 @@ class BigQueryLotoRepository:
         WHERE draw_no = @draw_no
         LIMIT 1
         """
+
         result = self.bq.query(
             sql,
-            parameters=[bigquery.ScalarQueryParameter("draw_no", "INT64", draw_no)],
+            parameters=[
+                bigquery.ScalarQueryParameter("draw_no", "INT64", draw_no),
+            ],
         )
+
         if not result.rows:
             return None
+
         return self._from_draw_result_row(result.rows[0])
 
     def find_recent_draw_histories(
@@ -102,10 +142,14 @@ class BigQueryLotoRepository:
         ORDER BY draw_date DESC, draw_no DESC
         LIMIT @limit
         """
+
         result = self.bq.query(
             sql,
-            parameters=[bigquery.ScalarQueryParameter("limit", "INT64", limit)],
+            parameters=[
+                bigquery.ScalarQueryParameter("limit", "INT64", limit),
+            ],
         )
+
         return [
             DrawHistory(
                 draw_no=int(row["draw_no"]),
@@ -125,7 +169,10 @@ class BigQueryLotoRepository:
             "draw_no": record.draw_no,
             "stats_target_draws": record.stats_target_draws,
             "score_snapshot": [
-                {"number": int(number), "score": float(score)}
+                {
+                    "number": int(number),
+                    "score": float(score),
+                }
                 for number, score in record.score_snapshot.items()
             ],
             "generated_predictions": record.generated_predictions,
@@ -139,6 +186,29 @@ class BigQueryLotoRepository:
 
     def _table_name(self, lottery_type: LotteryType) -> str:
         return self.DRAW_RESULT_TABLE_MAP[lottery_type]
+
+    def _find_existing_draw_nos(
+        self,
+        lottery_type: LotteryType,
+        draw_nos: list[int],
+    ) -> set[int]:
+        if not draw_nos:
+            return set()
+
+        sql = f"""
+        SELECT draw_no
+        FROM `{self.bq.table_ref(self._table_name(lottery_type))}`
+        WHERE draw_no IN UNNEST(@draw_nos)
+        """
+
+        result = self.bq.query(
+            sql,
+            parameters=[
+                bigquery.ArrayQueryParameter("draw_nos", "INT64", draw_nos),
+            ],
+        )
+
+        return {int(row["draw_no"]) for row in result.rows}
 
     def _validate_draw_result(self, draw_result: DrawResult) -> None:
         if draw_result.draw_no <= 0:
@@ -184,17 +254,30 @@ class BigQueryLotoRepository:
 
     def _to_draw_result_row(self, draw_result: DrawResult) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
+
+        fetched_at = draw_result.fetched_at or now
+        created_at = draw_result.created_at or now
+        updated_at = draw_result.updated_at or now
+
         return {
             "lottery_type": draw_result.lottery_type.value,
             "draw_no": draw_result.draw_no,
-            "draw_date": draw_result.draw_date.isoformat(),
+            "draw_date": draw_result.draw_date.isoformat()
+            if hasattr(draw_result.draw_date, "isoformat")
+            else str(draw_result.draw_date),
             "main_numbers": sorted(draw_result.main_numbers),
             "bonus_numbers": sorted(draw_result.bonus_numbers),
             "source_type": draw_result.source_type,
             "source_reference": draw_result.source_reference,
-            "fetched_at": draw_result.fetched_at.isoformat(),
-            "created_at": (draw_result.created_at or now).isoformat(),
-            "updated_at": (draw_result.updated_at or now).isoformat(),
+            "fetched_at": fetched_at.isoformat()
+            if hasattr(fetched_at, "isoformat")
+            else str(fetched_at),
+            "created_at": created_at.isoformat()
+            if hasattr(created_at, "isoformat")
+            else str(created_at),
+            "updated_at": updated_at.isoformat()
+            if hasattr(updated_at, "isoformat")
+            else str(updated_at),
         }
 
     def _from_draw_result_row(self, row: dict[str, Any]) -> DrawResult:

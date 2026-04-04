@@ -1,186 +1,137 @@
 from __future__ import annotations
 
 import csv
-import io
-import json
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from urllib.request import Request, urlopen
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Protocol
 
-from utils.exceptions import DataFetchError
-from domain.models import LotteryType
+from domain.models import DrawResult, LotteryType
+from utils.exceptions import ValidationError
 
 
 @dataclass(frozen=True)
-class RawDrawResultRecord:
+class FetchResult:
     lottery_type: LotteryType
-    draw_no: int
-    draw_date: str
-    main_numbers: list[int]
-    bonus_numbers: list[int]
-    source_type: str
-    source_reference: str | None
-    fetched_at: datetime
+    rows: list[DrawResult]
 
 
-class DrawResultFetcher(ABC):
-    @abstractmethod
-    def fetch(self, lottery_type: LotteryType) -> list[RawDrawResultRecord]:
+class DrawResultFetcher(Protocol):
+    def fetch(self, lottery_type: LotteryType) -> FetchResult:
         raise NotImplementedError
 
 
-class CsvDrawResultFetcher(DrawResultFetcher):
+class CsvDrawResultFetcher:
     """
-    LOTO6 CSV 例:
-    draw_no,draw_date,n1,n2,n3,n4,n5,n6,bonus1
+    CSV から draw results を取得する実装。
 
-    LOTO7 CSV 例:
-    draw_no,draw_date,n1,n2,n3,n4,n5,n6,n7,bonus1,bonus2
+    想定カラム:
+      draw_no,draw_date,main_numbers,bonus_numbers,source_reference
+
+    例:
+      draw_no,draw_date,main_numbers,bonus_numbers,source_reference
+      1,2024-01-01,"1 7 14 22 31 43","9","seed"
     """
 
-    def __init__(self, csv_text: str, source_reference: str | None = None) -> None:
-        self.csv_text = csv_text
-        self.source_reference = source_reference or "inline_csv"
+    FILE_MAP = {
+        LotteryType.LOTO6: "loto6_draw_results.csv",
+        LotteryType.LOTO7: "loto7_draw_results.csv",
+    }
 
-    def fetch(self, lottery_type: LotteryType) -> list[RawDrawResultRecord]:
-        try:
-            reader = csv.DictReader(io.StringIO(self.csv_text))
-            fetched_at = datetime.now(timezone.utc)
-            records: list[RawDrawResultRecord] = []
+    def __init__(self, base_dir: str = "docs/sample_data") -> None:
+        self.base_dir = Path(base_dir)
 
-            for row in reader:
-                draw_no = int(row["draw_no"])
-                draw_date = row["draw_date"]
-
-                if lottery_type == LotteryType.LOTO6:
-                    main_numbers = [int(row[f"n{i}"]) for i in range(1, 7)]
-                    bonus_numbers = [int(row["bonus1"])]
-                elif lottery_type == LotteryType.LOTO7:
-                    main_numbers = [int(row[f"n{i}"]) for i in range(1, 8)]
-                    bonus_numbers = [int(row["bonus1"]), int(row["bonus2"])]
-                else:
-                    raise DataFetchError(
-                        message="Unsupported lottery type in CSV fetcher.",
-                        details={"lottery_type": str(lottery_type)},
-                        is_retryable=False,
-                    )
-
-                records.append(
-                    RawDrawResultRecord(
-                        lottery_type=lottery_type,
-                        draw_no=draw_no,
-                        draw_date=draw_date,
-                        main_numbers=main_numbers,
-                        bonus_numbers=bonus_numbers,
-                        source_type="CSV",
-                        source_reference=self.source_reference,
-                        fetched_at=fetched_at,
-                    )
-                )
-
-            return records
-
-        except Exception as exc:
-            raise DataFetchError(
-                message="Failed to fetch draw results from CSV.",
+    def fetch(self, lottery_type: LotteryType) -> FetchResult:
+        path = self.base_dir / self.FILE_MAP[lottery_type]
+        if not path.exists():
+            raise ValidationError(
+                message="CSV file for draw results was not found.",
                 details={
                     "lottery_type": lottery_type.value,
-                    "source_reference": self.source_reference,
+                    "path": str(path),
                 },
-                cause=exc,
-                is_retryable=False,
-            ) from exc
-
-
-class ApiDrawResultFetcher(DrawResultFetcher):
-    """
-    APIレスポンス想定:
-    [
-      {
-        "draw_no": 100,
-        "draw_date": "2026-03-01",
-        "main_numbers": [1,2,3,4,5,6],
-        "bonus_numbers": [7]
-      }
-    ]
-    """
-
-    def __init__(self, endpoint_map: dict[LotteryType, str], timeout: int = 15) -> None:
-        self.endpoint_map = endpoint_map
-        self.timeout = timeout
-
-    def fetch(self, lottery_type: LotteryType) -> list[RawDrawResultRecord]:
-        endpoint = self.endpoint_map.get(lottery_type)
-        if not endpoint:
-            raise DataFetchError(
-                message="API endpoint is not configured.",
-                details={"lottery_type": lottery_type.value},
                 is_retryable=False,
             )
 
-        try:
-            request = Request(
-                endpoint,
-                headers={"User-Agent": "loto-predict-line/1.0"},
-                method="GET",
-            )
-            with urlopen(request, timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+        rows: list[DrawResult] = []
+        with path.open("r", encoding="utf-8") as fp:
+            reader = csv.DictReader(fp)
+            for raw in reader:
+                rows.append(self._parse_row(raw, lottery_type))
 
-            fetched_at = datetime.now(timezone.utc)
-            records: list[RawDrawResultRecord] = []
+        return FetchResult(
+            lottery_type=lottery_type,
+            rows=rows,
+        )
 
-            for item in payload:
-                records.append(
-                    RawDrawResultRecord(
-                        lottery_type=lottery_type,
-                        draw_no=int(item["draw_no"]),
-                        draw_date=str(item["draw_date"]),
-                        main_numbers=[int(n) for n in item["main_numbers"]],
-                        bonus_numbers=[int(n) for n in item["bonus_numbers"]],
-                        source_type="API",
-                        source_reference=endpoint,
-                        fetched_at=fetched_at,
-                    )
+    def _parse_row(
+        self,
+        raw: dict[str, str],
+        lottery_type: LotteryType,
+    ) -> DrawResult:
+        now = datetime.now(timezone.utc)
+
+        return DrawResult(
+            lottery_type=lottery_type,
+            draw_no=int(raw["draw_no"]),
+            draw_date=date.fromisoformat(raw["draw_date"]),
+            main_numbers=self._parse_numbers(raw["main_numbers"]),
+            bonus_numbers=self._parse_numbers(raw.get("bonus_numbers", "")),
+            source_type="csv",
+            source_reference=raw.get("source_reference") or None,
+            fetched_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+    @staticmethod
+    def _parse_numbers(value: str) -> list[int]:
+        text = (value or "").replace(",", " ").strip()
+        if not text:
+            return []
+        return [int(x) for x in text.split()]
+
+
+class InMemoryDrawResultFetcher:
+    """
+    開発・疎通確認用。
+    """
+
+    def fetch(self, lottery_type: LotteryType) -> FetchResult:
+        now = datetime.now(timezone.utc)
+
+        if lottery_type == LotteryType.LOTO6:
+            rows = [
+                DrawResult(
+                    lottery_type=LotteryType.LOTO6,
+                    draw_no=1,
+                    draw_date=date(2024, 1, 1),
+                    main_numbers=[1, 7, 14, 22, 31, 43],
+                    bonus_numbers=[9],
+                    source_type="in_memory",
+                    source_reference="seed",
+                    fetched_at=now,
+                    created_at=now,
+                    updated_at=now,
                 )
+            ]
+        else:
+            rows = [
+                DrawResult(
+                    lottery_type=LotteryType.LOTO7,
+                    draw_no=1,
+                    draw_date=date(2024, 1, 5),
+                    main_numbers=[3, 8, 12, 19, 24, 31, 37],
+                    bonus_numbers=[5, 11],
+                    source_type="in_memory",
+                    source_reference="seed",
+                    fetched_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            ]
 
-            return records
-
-        except Exception as exc:
-            raise DataFetchError(
-                message="Failed to fetch draw results from API.",
-                details={
-                    "lottery_type": lottery_type.value,
-                    "endpoint": endpoint,
-                },
-                cause=exc,
-                is_retryable=True,
-            ) from exc
-
-
-class ScraperDrawResultFetcher(DrawResultFetcher):
-    """
-    将来のスクレイピング差し替え用のひな型。
-    """
-
-    def __init__(self, target_url_map: dict[LotteryType, str]) -> None:
-        self.target_url_map = target_url_map
-
-    def fetch(self, lottery_type: LotteryType) -> list[RawDrawResultRecord]:
-        target_url = self.target_url_map.get(lottery_type)
-        if not target_url:
-            raise DataFetchError(
-                message="Scraper target URL is not configured.",
-                details={"lottery_type": lottery_type.value},
-                is_retryable=False,
-            )
-
-        raise DataFetchError(
-            message="ScraperDrawResultFetcher is not implemented yet.",
-            details={
-                "lottery_type": lottery_type.value,
-                "target_url": target_url,
-            },
-            is_retryable=False,
+        return FetchResult(
+            lottery_type=lottery_type,
+            rows=rows,
         )

@@ -1,16 +1,6 @@
 name: Deploy Function Source
 
 on:
-  pull_request:
-    paths:
-      - 'main.py'
-      - 'requirements.txt'
-      - 'config/**'
-      - 'utils/**'
-      - 'domain/**'
-      - 'infrastructure/**'
-      - 'usecases/**'
-      - '.github/workflows/deploy-function-source.yml'
   push:
     branches:
       - main
@@ -33,7 +23,7 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   SOURCE_BUCKET_NAME: ${{ vars.SOURCE_BUCKET_NAME }}
-  FUNCTION_SOURCE_OBJECT: functions/function-source.zip
+  FUNCTION_SOURCE_OBJECT: ${{ vars.FUNCTION_SOURCE_OBJECT }}
 
 jobs:
   package-and-upload:
@@ -78,4 +68,4 @@ jobs:
 
       - name: Upload archive to GCS
         run: |
-          gsutil cp function-source.zip gs://${SOURCE_BUCKET_NAME}/functions/function-source.zip
+          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/${FUNCTION_SOURCE_OBJECT}"
