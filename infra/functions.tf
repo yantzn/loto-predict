@@ -74,14 +74,15 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
-      APP_ENV         = var.app_env
-      APP_TIMEZONE    = var.app_timezone
-      GCP_PROJECT_ID  = var.project_id
-      GCP_REGION      = var.region
+      APP_ENV          = var.app_env
+      APP_TIMEZONE     = var.app_timezone
+      GCP_PROJECT_ID   = var.project_id
+      GCP_REGION       = var.region
       BIGQUERY_DATASET = google_bigquery_dataset.dataset.dataset_id
-      RAW_BUCKET_NAME = google_storage_bucket.raw_bucket.name
-      LOG_LEVEL       = var.log_level
-      LOG_JSON        = var.log_json
+        BIGQUERY_DATASET = var.bq_dataset
+      RAW_BUCKET_NAME  = google_storage_bucket.raw_bucket.name
+      LOG_LEVEL        = var.log_level
+      LOG_JSON         = var.log_json
     }
   }
 
@@ -117,15 +118,16 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
-      APP_ENV            = var.app_env
-      APP_TIMEZONE       = var.app_timezone
-      GCP_PROJECT_ID     = var.project_id
-      GCP_REGION         = var.region
-      BIGQUERY_DATASET   = google_bigquery_dataset.dataset.dataset_id
+      APP_ENV             = var.app_env
+      APP_TIMEZONE        = var.app_timezone
+      GCP_PROJECT_ID      = var.project_id
+      GCP_REGION          = var.region
+      BIGQUERY_DATASET    = google_bigquery_dataset.dataset.dataset_id
+        BIGQUERY_DATASET    = var.bq_dataset
       HISTORY_LIMIT_LOTO6 = tostring(var.history_limit_loto6)
       HISTORY_LIMIT_LOTO7 = tostring(var.history_limit_loto7)
-      LOG_LEVEL          = var.log_level
-      LOG_JSON           = var.log_json
+      LOG_LEVEL           = var.log_level
+      LOG_JSON            = var.log_json
     }
 
     secret_environment_variables {

@@ -58,6 +58,11 @@ variable "function_max_instance_count" {
 }
 
 variable "log_level" {
+  variable "bq_dataset" {
+    description = "BigQuery dataset ID for environment variable (from GitHub variable)"
+    type        = string
+    default     = "loto_predict"
+  }
   description = "Application log level"
   type        = string
   default     = "INFO"
