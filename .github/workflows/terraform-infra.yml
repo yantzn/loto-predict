@@ -40,6 +40,10 @@ env:
   LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: line_channel_access_token
   LINE_USER_ID_SECRET_ID: line_user_id
 
+  FETCH_FUNCTION_SOURCE_OBJECT: functions/fetch_loto_results/function-source.zip
+  IMPORT_FUNCTION_SOURCE_OBJECT: functions/import_loto_results_to_bq/function-source.zip
+  NOTIFY_FUNCTION_SOURCE_OBJECT: functions/generate_prediction_and_notify/function-source.zip
+
 jobs:
   terraform:
     if: >

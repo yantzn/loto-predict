@@ -25,3 +25,13 @@ output "loto6_scheduler_job_name" {
 output "loto7_scheduler_job_name" {
   value = google_cloud_scheduler_job.loto7_job.name
 }
+
+output "fetch_function_source_object" {
+  value = var.fetch_function_source_object
+}
+output "import_function_source_object" {
+  value = var.import_function_source_object
+}
+output "notify_function_source_object" {
+  value = var.notify_function_source_object
+}

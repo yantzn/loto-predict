@@ -26,13 +26,12 @@ env:
   FUNCTION_SOURCE_OBJECT: ${{ vars.FUNCTION_SOURCE_OBJECT }}
 
 jobs:
+
   package-and-upload:
     runs-on: ubuntu-latest
-
     defaults:
       run:
         shell: bash
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,26 +45,20 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify target variables
+      - name: Create fetch_loto_results archive
         run: |
-          test -n "${SOURCE_BUCKET_NAME}"
-          test -n "${FUNCTION_SOURCE_OBJECT}"
-          echo "SOURCE_BUCKET_NAME=${SOURCE_BUCKET_NAME}"
-          echo "FUNCTION_SOURCE_OBJECT=${FUNCTION_SOURCE_OBJECT}"
+          cd functions/fetch_loto_results
+          zip -r function-source.zip main.py
+          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip"
 
-      - name: Create function source archive
+      - name: Create import_loto_results_to_bq archive
         run: |
-          rm -f function-source.zip
-          zip -r function-source.zip \
-            main.py \
-            requirements.txt \
-            config \
-            utils \
-            domain \
-            infrastructure \
-            usecases
-          ls -l function-source.zip
+          cd ../../functions/import_loto_results_to_bq
+          zip -r function-source.zip main.py
+          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results_to_bq/function-source.zip"
 
-      - name: Upload archive to GCS
+      - name: Create generate_prediction_and_notify archive
         run: |
-          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/${FUNCTION_SOURCE_OBJECT}"
+          cd ../../functions/generate_prediction_and_notify
+          zip -r function-source.zip main.py
+          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip"

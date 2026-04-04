@@ -1,3 +1,23 @@
+variable "raw_bucket_name" {
+  type        = string
+  description = "GCS raw bucket for CSV"
+}
+
+variable "fetch_function_source_object" {
+  type        = string
+  description = "Object path for fetch_loto_results function source zip"
+  default     = "functions/fetch_loto_results/function-source.zip"
+}
+variable "import_function_source_object" {
+  type        = string
+  description = "Object path for import_loto_results_to_bq function source zip"
+  default     = "functions/import_loto_results_to_bq/function-source.zip"
+}
+variable "notify_function_source_object" {
+  type        = string
+  description = "Object path for generate_prediction_and_notify function source zip"
+  default     = "functions/generate_prediction_and_notify/function-source.zip"
+}
 variable "project_id" {
   type        = string
   description = "GCP project id"

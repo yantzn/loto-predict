@@ -1,3 +1,85 @@
+resource "google_cloudfunctions2_function" "fetch_loto_results" {
+  name     = "fetch-loto-results"
+  location = var.region
+  build_config {
+    runtime     = var.runtime
+    entry_point = "main"
+    source {
+      storage_source {
+        bucket = var.source_bucket_name
+        object = var.fetch_function_source_object
+      }
+    }
+  }
+  service_config {
+    timeout_seconds       = var.function_timeout_seconds
+    available_memory      = var.function_available_memory
+    min_instance_count    = 0
+    max_instance_count    = 1
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = var.functions_runtime_service_account_email
+    environment_variables = {
+      RAW_BUCKET = var.raw_bucket_name
+      # 必要に応じて他の変数も追加
+    }
+    # secret_environment_variables ... 必要に応じて
+  }
+}
+
+resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
+  name     = "import-loto-results-to-bq"
+  location = var.region
+  build_config {
+    runtime     = var.runtime
+    entry_point = "main"
+    source {
+      storage_source {
+        bucket = var.source_bucket_name
+        object = var.import_function_source_object
+      }
+    }
+  }
+  service_config {
+    timeout_seconds       = var.function_timeout_seconds
+    available_memory      = var.function_available_memory
+    min_instance_count    = 0
+    max_instance_count    = 1
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = var.functions_runtime_service_account_email
+    environment_variables = {
+      RAW_BUCKET = var.raw_bucket_name
+      # 必要に応じて他の変数も追加
+    }
+    # secret_environment_variables ... 必要に応じて
+  }
+}
+
+resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
+  name     = "generate-prediction-and-notify"
+  location = var.region
+  build_config {
+    runtime     = var.runtime
+    entry_point = "main"
+    source {
+      storage_source {
+        bucket = var.source_bucket_name
+        object = var.notify_function_source_object
+      }
+    }
+  }
+  service_config {
+    timeout_seconds       = var.function_timeout_seconds
+    available_memory      = var.function_available_memory
+    min_instance_count    = 0
+    max_instance_count    = 1
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = var.functions_runtime_service_account_email
+    environment_variables = {
+      # 必要な変数を追加
+    }
+    # secret_environment_variables ... 必要に応じて
+  }
+}
 resource "google_cloudfunctions2_function" "loto_orchestrator" {
   name     = var.function_name
   location = var.region
