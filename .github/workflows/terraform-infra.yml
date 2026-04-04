@@ -34,28 +34,22 @@ env:
 
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
-  TFSTATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   FUNCTION_SOURCE_BUCKET: ${{ vars.FUNCTION_SOURCE_BUCKET }}
+  BQ_DATASET: ${{ vars.BQ_DATASET }}
+  HISTORY_LIMIT_LOTO6: ${{ vars.HISTORY_LIMIT_LOTO6 }}
+  HISTORY_LIMIT_LOTO7: ${{ vars.HISTORY_LIMIT_LOTO7 }}
+  LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: ${{ vars.LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID }}
+  LINE_USER_ID_SECRET_ID: ${{ vars.LINE_USER_ID_SECRET_ID }}
 
+  TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
   WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
   WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-
   FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
   SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
-
-  LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-  LINE_TO_USER_ID: ${{ secrets.LINE_TO_USER_ID }}
-
-  LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: line-channel-access-token
-  LINE_USER_ID_SECRET_ID: line-user-id
 
   FETCH_FUNCTION_SOURCE_OBJECT: functions/fetch_loto_results/function-source.zip
   IMPORT_FUNCTION_SOURCE_OBJECT: functions/import_loto_results_to_bq/function-source.zip
   NOTIFY_FUNCTION_SOURCE_OBJECT: functions/generate_prediction_and_notify/function-source.zip
-
-  BQ_DATASET: ${{ vars.BQ_DATASET }}
-  HISTORY_LIMIT_LOTO6: ${{ vars.HISTORY_LIMIT_LOTO6 }}
-  HISTORY_LIMIT_LOTO7: ${{ vars.HISTORY_LIMIT_LOTO7 }}
 
 jobs:
   terraform:
@@ -93,15 +87,12 @@ jobs:
       - name: Verify required variables
         run: |
           set -euo pipefail
-
           test -n "${TFSTATE_BUCKET}"
           test -n "${GCP_PROJECT_ID}"
           test -n "${GCP_REGION}"
           test -n "${FUNCTION_SOURCE_BUCKET}"
           test -n "${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}"
           test -n "${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}"
-          test -n "${LINE_CHANNEL_ACCESS_TOKEN}"
-          test -n "${LINE_TO_USER_ID}"
           test -n "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}"
           test -n "${LINE_USER_ID_SECRET_ID}"
           test -n "${BQ_DATASET}"
@@ -139,8 +130,6 @@ jobs:
             -var="scheduler_invoker_service_account_email=${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}" \
             -var="history_limit_loto6=${HISTORY_LIMIT_LOTO6}" \
             -var="history_limit_loto7=${HISTORY_LIMIT_LOTO7}" \
-            -var="line_channel_access_token=${LINE_CHANNEL_ACCESS_TOKEN}" \
-            -var="line_to_user_id=${LINE_TO_USER_ID}" \
             -var="line_channel_access_token_secret_id=${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
             -var="line_user_id_secret_id=${LINE_USER_ID_SECRET_ID}" \
             -out=tfplan

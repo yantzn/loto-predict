@@ -94,27 +94,13 @@ variable "history_limit_loto7" {
 }
 
 variable "line_channel_access_token_secret_id" {
-  description = "Secret Manager secret id for LINE channel access token"
+  description = "Existing Secret Manager secret id for LINE channel access token"
   type        = string
-  default     = "line-channel-access-token"
 }
 
 variable "line_user_id_secret_id" {
-  description = "Secret Manager secret id for LINE target user id"
+  description = "Existing Secret Manager secret id for LINE target user id"
   type        = string
-  default     = "line-user-id"
-}
-
-variable "line_channel_access_token" {
-  description = "LINE Messaging API channel access token"
-  type        = string
-  sensitive   = true
-}
-
-variable "line_to_user_id" {
-  description = "LINE target user id"
-  type        = string
-  sensitive   = true
 }
 
 locals {
