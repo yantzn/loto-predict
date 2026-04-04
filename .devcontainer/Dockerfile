@@ -1,10 +1,7 @@
-# ベースイメージ
-FROM mcr.microsoft.com/devcontainers/python:3.12
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-# 非対話モード
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 基本ツール
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends \
 	ca-certificates \
@@ -12,6 +9,9 @@ RUN apt-get update \
 	git \
 	gnupg \
 	unzip \
+	bash-completion \
+	jq \
+	make \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Terraform
@@ -33,11 +33,5 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
 	&& apt-get install -y --no-install-recommends google-cloud-cli \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Python依存関係
-COPY requirements.txt /tmp/pip-tmp/
-
-# Install python dependencies from requirements.txt
-RUN pip install --no-cache-dir -r /tmp/pip-tmp/requirements.txt
-
-# Clean up the temporary directory
-RUN rm -rf /tmp/pip-tmp
+USER vscode
+WORKDIR /workspace

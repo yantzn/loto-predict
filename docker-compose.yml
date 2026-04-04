@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loto-predict-app
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
+    volumes:
+      - .:/app
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+    restart: unless-stopped

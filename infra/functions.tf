@@ -55,11 +55,4 @@ resource "google_cloudfunctions2_function" "loto_orchestrator" {
       version    = "latest"
     }
   }
-
-  depends_on = [
-    google_project_service.services,
-    google_bigquery_dataset.dataset,
-    google_secret_manager_secret.line_channel_access_token,
-    google_secret_manager_secret.line_user_id,
-  ]
 }

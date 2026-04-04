@@ -1,15 +1,17 @@
 services:
-  app:
+  terraform:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
+    container_name: loto-predict-terraform-dev
+    working_dir: /workspace
+    command: /bin/sh -c "while sleep 1000; do :; done"
     volumes:
       - ..:/workspace:cached
       - gcloud-config:/home/vscode/.config/gcloud
-    working_dir: /workspace
-    command: /bin/sh -c "sudo chown -R vscode:vscode /home/vscode/.config/gcloud || true; while sleep 1000; do :; done"
     environment:
-      GCP_PROJECT_ID: loto-predict
+      GCP_PROJECT_ID: loto-predict-491915
+      GOOGLE_CLOUD_PROJECT: loto-predict-491915
 
 volumes:
   gcloud-config:
