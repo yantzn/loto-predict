@@ -5,13 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'main.py'
-      - 'requirements.txt'
-      - 'config/**'
-      - 'utils/**'
-      - 'domain/**'
-      - 'infrastructure/**'
-      - 'usecases/**'
+      - 'functions/**'
+      - 'src/**'
+      - 'scripts/package_functions.sh'
       - '.github/workflows/deploy-function-source.yml'
   workflow_dispatch:
 
@@ -20,18 +16,14 @@ permissions:
   id-token: write
 
 env:
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ vars.GCP_REGION }}
-  SOURCE_BUCKET_NAME: ${{ vars.SOURCE_BUCKET_NAME }}
-  FUNCTION_SOURCE_OBJECT: ${{ vars.FUNCTION_SOURCE_OBJECT }}
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+  SOURCE_BUCKET_NAME: ${{ secrets.FUNCTION_SOURCE_BUCKET }}
 
 jobs:
-
-  package-and-upload:
+  deploy-function-source:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,23 +34,27 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - name: Set up gcloud
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Create fetch_loto_results archive
+      - name: Package functions
         run: |
-          cd functions/fetch_loto_results
-          zip -r function-source.zip main.py
-          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip"
+          bash ./scripts/package_functions.sh
 
-      - name: Create import_loto_results_to_bq archive
+      - name: Upload fetch_loto_results source
         run: |
-          cd ../../functions/import_loto_results_to_bq
-          zip -r function-source.zip main.py
-          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results_to_bq/function-source.zip"
+          gcloud storage cp \
+            dist/fetch_loto_results.zip \
+            gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip
 
-      - name: Create generate_prediction_and_notify archive
+      - name: Upload import_loto_results_to_bq source
         run: |
-          cd ../../functions/generate_prediction_and_notify
-          zip -r function-source.zip main.py
-          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip"
+          gcloud storage cp \
+            dist/import_loto_results_to_bq.zip \
+            gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results_to_bq/function-source.zip
+
+      - name: Upload generate_prediction_and_notify source
+        run: |
+          gcloud storage cp \
+            dist/generate_prediction_and_notify.zip \
+            gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip

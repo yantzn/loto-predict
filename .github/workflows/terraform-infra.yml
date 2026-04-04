@@ -8,37 +8,33 @@ on:
       - 'infra/**'
       - '.github/workflows/terraform-infra.yml'
   workflow_run:
-    workflows:
-      - Deploy Function Source
+    workflows: ["Deploy Function Source"]
     types:
       - completed
   workflow_dispatch:
-    inputs:
-      apply:
-        description: 'Run terraform apply'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
 
 permissions:
   contents: read
   id-token: write
-  pull-requests: write
 
 env:
-  TF_IN_AUTOMATION: true
-  TF_INPUT: false
-  TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+  TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+  WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+  WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+  FUNCTION_SOURCE_BUCKET: ${{ secrets.FUNCTION_SOURCE_BUCKET }}
+  LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+  LINE_TO_USER_ID: ${{ secrets.LINE_TO_USER_ID }}
 
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ vars.GCP_REGION }}
-  TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
-
-  LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: line_channel_access_token
-  LINE_USER_ID_SECRET_ID: line_user_id
+  BQ_DATASET: ${{ vars.BQ_DATASET }}
+  BQ_TABLE_LOTO6_HISTORY: ${{ vars.BQ_TABLE_LOTO6_HISTORY }}
+  BQ_TABLE_LOTO7_HISTORY: ${{ vars.BQ_TABLE_LOTO7_HISTORY }}
+  BQ_STAGING_TABLE_LOTO6: ${{ vars.BQ_STAGING_TABLE_LOTO6 }}
+  BQ_STAGING_TABLE_LOTO7: ${{ vars.BQ_STAGING_TABLE_LOTO7 }}
+  BQ_TABLE_PREDICTION_RUNS: ${{ vars.BQ_TABLE_PREDICTION_RUNS }}
+  HISTORY_LIMIT_LOTO6: ${{ vars.HISTORY_LIMIT_LOTO6 }}
+  HISTORY_LIMIT_LOTO7: ${{ vars.HISTORY_LIMIT_LOTO7 }}
 
   FETCH_FUNCTION_SOURCE_OBJECT: functions/fetch_loto_results/function-source.zip
   IMPORT_FUNCTION_SOURCE_OBJECT: functions/import_loto_results_to_bq/function-source.zip
@@ -52,132 +48,59 @@ jobs:
       (github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        shell: bash
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare Terraform plugin cache
-        run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
 
-      - name: Set up gcloud
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set up Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
 
-      - name: Verify required variables
-        run: |
-          test -n "${TFSTATE_BUCKET}"
-          test -n "${GCP_PROJECT_ID}"
-          test -n "${GCP_REGION}"
-          echo "TFSTATE_BUCKET=${TFSTATE_BUCKET}"
-          echo "GCP_PROJECT_ID=${GCP_PROJECT_ID}"
-          echo "GCP_REGION=${GCP_REGION}"
-
-      - name: Terraform fmt check
-        working-directory: infra
-        run: terraform fmt -check -recursive
-
-      - name: Terraform init
+      - name: Terraform Init
         working-directory: infra
         run: |
-          terraform init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}"
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="prefix=loto-predict/infra"
 
-      - name: Terraform validate
+      - name: Terraform Fmt
+        working-directory: infra
+        run: terraform fmt -check
+
+      - name: Terraform Validate
         working-directory: infra
         run: terraform validate
 
-      - name: Terraform plan
-        id: plan
+      - name: Terraform Plan
         working-directory: infra
-        env:
-          FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
-          SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
         run: |
-          test -n "${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}"
-          test -n "${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}"
-
           terraform plan \
-            -lock-timeout=5m \
             -var="project_id=${GCP_PROJECT_ID}" \
             -var="region=${GCP_REGION}" \
-            -var="functions_runtime_service_account_email=${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}" \
-            -var="scheduler_invoker_service_account_email=${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}" \
+            -var="source_bucket_name=${FUNCTION_SOURCE_BUCKET}" \
+            -var="fetch_function_source_object=${FETCH_FUNCTION_SOURCE_OBJECT}" \
+            -var="import_function_source_object=${IMPORT_FUNCTION_SOURCE_OBJECT}" \
+            -var="notify_function_source_object=${NOTIFY_FUNCTION_SOURCE_OBJECT}" \
+            -var="bigquery_dataset_id=${BQ_DATASET}" \
+            -var="loto6_history_table_id=${BQ_TABLE_LOTO6_HISTORY}" \
+            -var="loto7_history_table_id=${BQ_TABLE_LOTO7_HISTORY}" \
+            -var="loto6_staging_table_id=${BQ_STAGING_TABLE_LOTO6}" \
+            -var="loto7_staging_table_id=${BQ_STAGING_TABLE_LOTO7}" \
+            -var="prediction_runs_table_id=${BQ_TABLE_PREDICTION_RUNS}" \
+            -var="history_limit_loto6=${HISTORY_LIMIT_LOTO6}" \
+            -var="history_limit_loto7=${HISTORY_LIMIT_LOTO7}" \
+            -var="line_channel_access_token=${LINE_CHANNEL_ACCESS_TOKEN}" \
+            -var="line_to_user_id=${LINE_TO_USER_ID}" \
             -out=tfplan
 
-      - name: Upload tfplan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: infra/tfplan
-
-      - name: Terraform apply (push)
-        if: github.event_name == 'push'
+      - name: Terraform Apply
         working-directory: infra
-        run: terraform apply -lock-timeout=5m -auto-approve tfplan
-
-      - name: Terraform apply (workflow_run)
-        if: github.event_name == 'workflow_run'
-        working-directory: infra
-        run: terraform apply -lock-timeout=5m -auto-approve tfplan
-
-      - name: Terraform apply (manual)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true'
-        working-directory: infra
-        run: terraform apply -lock-timeout=5m -auto-approve tfplan
-
-      - name: Verify target secrets exist
-        run: |
-          gcloud secrets describe "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
-          gcloud secrets describe "${LINE_USER_ID_SECRET_ID}" --project "${GCP_PROJECT_ID}" >/dev/null
-
-      - name: Sync LINE channel access token
-        env:
-          SECRET_VALUE: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN_VALUE }}
-        run: |
-          if [ -z "${SECRET_VALUE}" ]; then
-            echo "LINE_CHANNEL_ACCESS_TOKEN_VALUE is empty"
-            exit 1
-          fi
-
-          printf '%s' "${SECRET_VALUE}" | \
-            gcloud secrets versions add "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
-              --project="${GCP_PROJECT_ID}" \
-              --data-file=-
-
-      - name: Sync LINE user id
-        env:
-          SECRET_VALUE: ${{ secrets.LINE_USER_ID_VALUE }}
-        run: |
-          if [ -z "${SECRET_VALUE}" ]; then
-            echo "LINE_USER_ID_VALUE is empty"
-            exit 1
-          fi
-
-          printf '%s' "${SECRET_VALUE}" | \
-            gcloud secrets versions add "${LINE_USER_ID_SECRET_ID}" \
-              --project="${GCP_PROJECT_ID}" \
-              --data-file=-
-
-      - name: Show secret versions
-        run: |
-          gcloud secrets versions list "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}" \
-            --project="${GCP_PROJECT_ID}" \
-            --limit=3
-
-          gcloud secrets versions list "${LINE_USER_ID_SECRET_ID}" \
-            --project="${GCP_PROJECT_ID}" \
-            --limit=3
+        run: terraform apply -auto-approve tfplan

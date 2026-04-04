@@ -1,9 +1,12 @@
 resource "google_cloudfunctions2_function" "fetch_loto_results" {
   name     = "fetch-loto-results"
   location = var.region
+  project  = var.project_id
+
   build_config {
     runtime     = var.runtime
-    entry_point = "main"
+    entry_point = "fetch_loto_results"
+
     source {
       storage_source {
         bucket = var.source_bucket_name
@@ -11,6 +14,7 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
       }
     }
   }
+
   service_config {
     timeout_seconds       = var.function_timeout_seconds
     available_memory      = var.function_available_memory
@@ -18,20 +22,26 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
     max_instance_count    = 1
     ingress_settings      = "ALLOW_ALL"
     service_account_email = var.functions_runtime_service_account_email
+
     environment_variables = {
-      RAW_BUCKET = var.raw_bucket_name
-      # 必要に応じて他の変数も追加
+      GCP_PROJECT_ID = var.project_id
+      GCS_BUCKET_RAW = google_storage_bucket.raw_bucket.name
+      LOG_LEVEL      = "INFO"
     }
-    # secret_environment_variables ... 必要に応じて
   }
+
+  depends_on = [google_project_service.services]
 }
 
 resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
   name     = "import-loto-results-to-bq"
   location = var.region
+  project  = var.project_id
+
   build_config {
     runtime     = var.runtime
-    entry_point = "main"
+    entry_point = "import_loto_results_http"
+
     source {
       storage_source {
         bucket = var.source_bucket_name
@@ -39,27 +49,39 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
       }
     }
   }
+
   service_config {
-    timeout_seconds       = var.function_timeout_seconds
-    available_memory      = var.function_available_memory
+    timeout_seconds       = 300
+    available_memory      = "512M"
     min_instance_count    = 0
     max_instance_count    = 1
     ingress_settings      = "ALLOW_ALL"
     service_account_email = var.functions_runtime_service_account_email
+
     environment_variables = {
-      RAW_BUCKET = var.raw_bucket_name
-      # 必要に応じて他の変数も追加
+      GCP_PROJECT_ID          = var.project_id
+      BQ_DATASET              = var.bigquery_dataset_id
+      BQ_TABLE_LOTO6_HISTORY  = var.loto6_history_table_id
+      BQ_TABLE_LOTO7_HISTORY  = var.loto7_history_table_id
+      BQ_STAGING_TABLE_LOTO6  = var.loto6_staging_table_id
+      BQ_STAGING_TABLE_LOTO7  = var.loto7_staging_table_id
+      BQ_TABLE_PREDICTION_RUNS = var.prediction_runs_table_id
+      LOG_LEVEL               = "INFO"
     }
-    # secret_environment_variables ... 必要に応じて
   }
+
+  depends_on = [google_project_service.services]
 }
 
 resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
   name     = "generate-prediction-and-notify"
   location = var.region
+  project  = var.project_id
+
   build_config {
     runtime     = var.runtime
-    entry_point = "main"
+    entry_point = "generate_prediction_and_notify"
+
     source {
       storage_source {
         bucket = var.source_bucket_name
@@ -67,100 +89,6 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
       }
     }
   }
-  service_config {
-    timeout_seconds       = var.function_timeout_seconds
-    available_memory      = var.function_available_memory
-    min_instance_count    = 0
-    max_instance_count    = 1
-    ingress_settings      = "ALLOW_ALL"
-    service_account_email = var.functions_runtime_service_account_email
-    environment_variables = {
-      # 必要な変数を追加
-    }
-    # secret_environment_variables ... 必要に応じて
-  }
-}
-resource "google_cloudfunctions2_function" "loto_orchestrator" {
-  name     = var.function_name
-  location = var.region
-
-  build_config {
-    runtime     = var.runtime
-    entry_point = "entry_point"
-
-    source {
-      storage_source {
-        bucket = var.source_bucket_name
-        object = var.source_object_name
-      }
-    }
-  }
-
-  service_config {
-    timeout_seconds       = var.function_timeout_seconds
-    available_memory      = var.function_available_memory
-    min_instance_count    = var.function_min_instance_count
-    max_instance_count    = var.function_max_instance_count
-    ingress_settings      = "ALLOW_ALL"
-    service_account_email = var.functions_runtime_service_account_email
-
-    environment_variables = {
-      APP_ENV            = var.app_env
-      APP_TIMEZONE       = var.app_timezone
-      GCP_PROJECT_ID     = var.project_id
-      GCP_REGION         = var.region
-      BIGQUERY_DATASET   = var.dataset_id
-      LOG_LEVEL          = var.log_level
-      LOG_JSON           = var.log_json
-      SERVICE_NAME       = var.service_name
-      STATS_TARGET_DRAWS = tostring(var.stats_target_draws)
-      PREDICTION_COUNT   = tostring(var.prediction_count)
-      LOTO6_NUMBER_MIN   = tostring(var.loto6_number_min)
-      LOTO6_NUMBER_MAX   = tostring(var.loto6_number_max)
-      LOTO6_PICK_COUNT   = tostring(var.loto6_pick_count)
-      LOTO7_NUMBER_MIN   = tostring(var.loto7_number_min)
-      LOTO7_NUMBER_MAX   = tostring(var.loto7_number_max)
-      LOTO7_PICK_COUNT   = tostring(var.loto7_pick_count)
-    }
-
-    secret_environment_variables {
-      key        = "LINE_CHANNEL_ACCESS_TOKEN"
-      project_id = var.project_id
-      secret     = google_secret_manager_secret.line_channel_access_token.secret_id
-      version    = "latest"
-    }
-
-    secret_environment_variables {
-      key        = "LINE_USER_ID"
-      project_id = var.project_id
-      secret     = google_secret_manager_secret.line_user_id.secret_id
-      version    = "latest"
-    }
-  }
-
-  depends_on = [
-    google_project_service.services,
-    google_bigquery_dataset.dataset,
-    google_secret_manager_secret.line_channel_access_token,
-    google_secret_manager_secret.line_user_id,
-  ]
-}
-
-resource "google_cloudfunctions2_function" "loto_sync" {
-  name     = "loto-sync"
-  location = var.region
-
-  build_config {
-    runtime     = var.runtime
-    entry_point = "sync_entry_point"
-
-    source {
-      storage_source {
-        bucket = var.source_bucket_name
-        object = var.source_object_name
-      }
-    }
-  }
 
   service_config {
     timeout_seconds       = var.function_timeout_seconds
@@ -171,25 +99,18 @@ resource "google_cloudfunctions2_function" "loto_sync" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
-      APP_ENV          = var.app_env
-      APP_TIMEZONE     = var.app_timezone
-      GCP_PROJECT_ID   = var.project_id
-      GCP_REGION       = var.region
-      BIGQUERY_DATASET = var.dataset_id
-      LOG_LEVEL        = var.log_level
-      LOG_JSON         = var.log_json
-      SERVICE_NAME     = var.service_name
-      LOTO6_NUMBER_MIN = tostring(var.loto6_number_min)
-      LOTO6_NUMBER_MAX = tostring(var.loto6_number_max)
-      LOTO6_PICK_COUNT = tostring(var.loto6_pick_count)
-      LOTO7_NUMBER_MIN = tostring(var.loto7_number_min)
-      LOTO7_NUMBER_MAX = tostring(var.loto7_number_max)
-      LOTO7_PICK_COUNT = tostring(var.loto7_pick_count)
+      GCP_PROJECT_ID           = var.project_id
+      BQ_DATASET               = var.bigquery_dataset_id
+      BQ_TABLE_LOTO6_HISTORY   = var.loto6_history_table_id
+      BQ_TABLE_LOTO7_HISTORY   = var.loto7_history_table_id
+      BQ_TABLE_PREDICTION_RUNS = var.prediction_runs_table_id
+      HISTORY_LIMIT_LOTO6      = tostring(var.history_limit_loto6)
+      HISTORY_LIMIT_LOTO7      = tostring(var.history_limit_loto7)
+      LINE_CHANNEL_ACCESS_TOKEN = var.line_channel_access_token
+      LINE_TO_USER_ID           = var.line_to_user_id
+      LOG_LEVEL                 = "INFO"
     }
   }
 
-  depends_on = [
-    google_project_service.services,
-    google_bigquery_dataset.dataset,
-  ]
+  depends_on = [google_project_service.services]
 }
