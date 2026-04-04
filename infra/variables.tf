@@ -1,195 +1,122 @@
-variable "raw_bucket_name" {
-  type        = string
-  description = "GCS raw bucket for CSV"
-}
-
-variable "fetch_function_source_object" {
-  type        = string
-  description = "Object path for fetch_loto_results function source zip"
-  default     = "functions/fetch_loto_results/function-source.zip"
-}
-variable "import_function_source_object" {
-  type        = string
-  description = "Object path for import_loto_results_to_bq function source zip"
-  default     = "functions/import_loto_results_to_bq/function-source.zip"
-}
-variable "notify_function_source_object" {
-  type        = string
-  description = "Object path for generate_prediction_and_notify function source zip"
-  default     = "functions/generate_prediction_and_notify/function-source.zip"
-}
 variable "project_id" {
+  description = "GCP project ID"
   type        = string
-  description = "GCP project id"
 }
 
 variable "region" {
+  description = "GCP region"
   type        = string
-  description = "Default region"
   default     = "asia-northeast1"
 }
 
-variable "dataset_id" {
+variable "app_timezone" {
+  description = "Application timezone"
   type        = string
-  description = "BigQuery dataset id"
+  default     = "Asia/Tokyo"
+}
+
+variable "dataset_id" {
+  description = "BigQuery dataset ID"
+  type        = string
   default     = "loto_predict"
 }
 
-variable "function_name" {
-  type        = string
-  description = "Cloud Function name"
-  default     = "loto-orchestrator"
-}
-
 variable "runtime" {
+  description = "Cloud Functions runtime"
   type        = string
-  description = "Python runtime version"
   default     = "python312"
 }
 
-variable "source_bucket_name" {
-  type        = string
-  description = "Bucket for function source archives"
-}
-
-variable "source_object_name" {
-  type        = string
-  description = "Object path for uploaded function source zip"
-  default     = "functions/function-source.zip"
-}
-
-variable "functions_runtime_service_account_email" {
-  type        = string
-  description = "Runtime service account email from bootstrap"
-}
-
-variable "scheduler_invoker_service_account_email" {
-  type        = string
-  description = "Scheduler invoker service account email from bootstrap"
-}
-
-variable "line_channel_access_token_secret_id" {
-  type        = string
-  description = "Secret Manager secret id for LINE channel access token"
-  default     = "LINE_CHANNEL_ACCESS_TOKEN"
-}
-
-variable "line_user_id_secret_id" {
-  type        = string
-  description = "Secret Manager secret id for LINE user id"
-  default     = "LINE_USER_ID"
-}
-
-variable "app_env" {
-  type        = string
-  description = "Application environment"
-  default     = "prod"
-}
-
-variable "app_timezone" {
-  type        = string
-  description = "Application timezone"
-  default     = "Asia/Tokyo"
-}
-
-variable "log_level" {
-  type        = string
-  description = "Application log level"
-  default     = "INFO"
-}
-
-variable "log_json" {
-  type        = string
-  description = "Whether to emit JSON logs"
-  default     = "true"
-}
-
-variable "service_name" {
-  type        = string
-  description = "Service name"
-  default     = "loto-predict-line"
-}
-
-variable "stats_target_draws" {
-  type        = number
-  description = "Default number of historical draws used for statistics"
-  default     = 100
-}
-
-variable "prediction_count" {
-  type        = number
-  description = "Default number of tickets to generate"
-  default     = 5
-}
-
-variable "loto6_number_min" {
-  type    = number
-  default = 1
-}
-
-variable "loto6_number_max" {
-  type    = number
-  default = 43
-}
-
-variable "loto6_pick_count" {
-  type    = number
-  default = 6
-}
-
-variable "loto7_number_min" {
-  type    = number
-  default = 1
-}
-
-variable "loto7_number_max" {
-  type    = number
-  default = 37
-}
-
-variable "loto7_pick_count" {
-  type    = number
-  default = 7
-}
-
 variable "function_timeout_seconds" {
+  description = "Default timeout for Cloud Functions"
   type        = number
-  description = "Cloud Function timeout"
-  default     = 60
+  default     = 120
 }
 
 variable "function_available_memory" {
+  description = "Default memory for Cloud Functions"
   type        = string
-  description = "Cloud Function memory"
   default     = "512M"
 }
 
-variable "function_min_instance_count" {
+variable "log_level" {
+  description = "Application log level"
+  type        = string
+  default     = "INFO"
+}
+
+variable "raw_bucket_name" {
+  description = "Bucket name for scraped/manual CSV files. If null, use ${project_id}-loto-raw."
+  type        = string
+  default     = null
+}
+
+variable "source_bucket_name" {
+  description = "Bucket name that stores Cloud Functions source zip files"
+  type        = string
+}
+
+variable "fetch_function_source_object" {
+  description = "GCS object path for fetch_loto_results source zip"
+  type        = string
+}
+
+variable "import_function_source_object" {
+  description = "GCS object path for import_loto_results_to_bq source zip"
+  type        = string
+}
+
+variable "notify_function_source_object" {
+  description = "GCS object path for generate_prediction_and_notify source zip"
+  type        = string
+}
+
+variable "functions_runtime_service_account_email" {
+  description = "Service account email used by Cloud Functions runtime"
+  type        = string
+}
+
+variable "scheduler_invoker_service_account_email" {
+  description = "Service account email used by Cloud Scheduler OIDC invocations"
+  type        = string
+}
+
+variable "history_limit_loto6" {
+  description = "History window size used when generating loto6 predictions"
   type        = number
-  description = "Cloud Function min instances"
-  default     = 0
+  default     = 100
 }
 
-variable "function_max_instance_count" {
+variable "history_limit_loto7" {
+  description = "History window size used when generating loto7 predictions"
   type        = number
-  description = "Cloud Function max instances"
-  default     = 1
+  default     = 100
 }
 
-variable "scheduler_loto6_cron" {
+variable "line_channel_access_token_secret_id" {
+  description = "Secret Manager secret id for LINE channel access token"
   type        = string
-  description = "Cron for LOTO6"
-  default     = "5 19 * * 1,4"
+  default     = "line-channel-access-token"
 }
 
-variable "scheduler_loto7_cron" {
+variable "line_user_id_secret_id" {
+  description = "Secret Manager secret id for LINE target user id"
   type        = string
-  description = "Cron for LOTO7"
-  default     = "5 19 * * 5"
+  default     = "line-user-id"
 }
 
-variable "scheduler_time_zone" {
+variable "line_channel_access_token" {
+  description = "LINE Messaging API channel access token"
   type        = string
-  description = "Scheduler timezone"
-  default     = "Asia/Tokyo"
+  sensitive   = true
+}
+
+variable "line_to_user_id" {
+  description = "LINE target user id"
+  type        = string
+  sensitive   = true
+}
+
+locals {
+  resolved_raw_bucket_name = coalesce(var.raw_bucket_name, "${var.project_id}-loto-raw")
 }

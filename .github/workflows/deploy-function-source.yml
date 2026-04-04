@@ -21,8 +21,11 @@ env:
   SOURCE_BUCKET_NAME: ${{ secrets.FUNCTION_SOURCE_BUCKET }}
 
 jobs:
-  deploy-function-source:
+  package-and-upload:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout
@@ -34,12 +37,11 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - name: Setup gcloud
+      - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Package functions
-        run: |
-          bash ./scripts/package_functions.sh
+        run: bash ./scripts/package_functions.sh
 
       - name: Upload fetch_loto_results source
         run: |

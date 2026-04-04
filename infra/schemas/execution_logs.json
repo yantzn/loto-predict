@@ -1,7 +1,7 @@
 [
   {
-    "name": "execution_id",
-    "type": "STRING",
+    "name": "created_at",
+    "type": "TIMESTAMP",
     "mode": "REQUIRED"
   },
   {
@@ -20,23 +20,28 @@
     "mode": "REQUIRED"
   },
   {
-    "name": "error_code",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  },
-  {
     "name": "message",
     "type": "STRING",
     "mode": "NULLABLE"
   },
   {
-    "name": "details",
-    "type": "JSON",
+    "name": "gcs_uri",
+    "type": "STRING",
     "mode": "NULLABLE"
   },
   {
-    "name": "created_at",
-    "type": "TIMESTAMP",
-    "mode": "REQUIRED"
+    "name": "draw_number",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "run_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "payload_json",
+    "type": "STRING",
+    "mode": "NULLABLE"
   }
 ]

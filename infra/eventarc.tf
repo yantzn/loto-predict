@@ -4,11 +4,12 @@ resource "google_eventarc_trigger" "import_loto_results_gcs" {
 
   matching_criteria {
     attribute = "type"
-    value     = "google.cloud.storage.object.finalized"
+    value     = "google.cloud.storage.object.v1.finalized"
   }
+
   matching_criteria {
     attribute = "bucket"
-    value     = var.raw_bucket_name
+    value     = google_storage_bucket.raw_bucket.name
   }
 
   service_account = var.functions_runtime_service_account_email
@@ -18,4 +19,10 @@ resource "google_eventarc_trigger" "import_loto_results_gcs" {
       function = google_cloudfunctions2_function.import_loto_results_to_bq.name
     }
   }
+
+  depends_on = [
+    google_project_service.services,
+    google_storage_bucket.raw_bucket,
+    google_cloudfunctions2_function.import_loto_results_to_bq
+  ]
 }

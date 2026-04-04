@@ -26,11 +26,14 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
     environment_variables = {
       GCP_PROJECT_ID = var.project_id
       GCS_BUCKET_RAW = google_storage_bucket.raw_bucket.name
-      LOG_LEVEL      = "INFO"
+      LOG_LEVEL      = var.log_level
     }
   }
 
-  depends_on = [google_project_service.services]
+  depends_on = [
+    google_project_service.services,
+    google_storage_bucket.raw_bucket,
+  ]
 }
 
 resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
@@ -40,7 +43,7 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
 
   build_config {
     runtime     = var.runtime
-    entry_point = "import_loto_results_http"
+    entry_point = "import_loto_results"
 
     source {
       storage_source {
@@ -59,18 +62,26 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
-      GCP_PROJECT_ID          = var.project_id
-      BQ_DATASET              = var.bigquery_dataset_id
-      BQ_TABLE_LOTO6_HISTORY  = var.loto6_history_table_id
-      BQ_TABLE_LOTO7_HISTORY  = var.loto7_history_table_id
-      BQ_STAGING_TABLE_LOTO6  = var.loto6_staging_table_id
-      BQ_STAGING_TABLE_LOTO7  = var.loto7_staging_table_id
-      BQ_TABLE_PREDICTION_RUNS = var.prediction_runs_table_id
-      LOG_LEVEL               = "INFO"
+      GCP_PROJECT_ID           = var.project_id
+      BQ_DATASET               = var.dataset_id
+      BQ_TABLE_LOTO6_HISTORY   = google_bigquery_table.loto6_history.table_id
+      BQ_TABLE_LOTO7_HISTORY   = google_bigquery_table.loto7_history.table_id
+      BQ_STAGING_TABLE_LOTO6   = google_bigquery_table.loto6_history_staging.table_id
+      BQ_STAGING_TABLE_LOTO7   = google_bigquery_table.loto7_history_staging.table_id
+      BQ_TABLE_PREDICTION_RUNS = google_bigquery_table.prediction_runs.table_id
+      LOG_LEVEL                = var.log_level
     }
   }
 
-  depends_on = [google_project_service.services]
+  depends_on = [
+    google_project_service.services,
+    google_bigquery_dataset.dataset,
+    google_bigquery_table.loto6_history,
+    google_bigquery_table.loto7_history,
+    google_bigquery_table.loto6_history_staging,
+    google_bigquery_table.loto7_history_staging,
+    google_bigquery_table.prediction_runs,
+  ]
 }
 
 resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
@@ -100,17 +111,39 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
 
     environment_variables = {
       GCP_PROJECT_ID           = var.project_id
-      BQ_DATASET               = var.bigquery_dataset_id
-      BQ_TABLE_LOTO6_HISTORY   = var.loto6_history_table_id
-      BQ_TABLE_LOTO7_HISTORY   = var.loto7_history_table_id
-      BQ_TABLE_PREDICTION_RUNS = var.prediction_runs_table_id
+      BQ_DATASET               = var.dataset_id
+      BQ_TABLE_LOTO6_HISTORY   = google_bigquery_table.loto6_history.table_id
+      BQ_TABLE_LOTO7_HISTORY   = google_bigquery_table.loto7_history.table_id
+      BQ_TABLE_PREDICTION_RUNS = google_bigquery_table.prediction_runs.table_id
       HISTORY_LIMIT_LOTO6      = tostring(var.history_limit_loto6)
       HISTORY_LIMIT_LOTO7      = tostring(var.history_limit_loto7)
-      LINE_CHANNEL_ACCESS_TOKEN = var.line_channel_access_token
-      LINE_TO_USER_ID           = var.line_to_user_id
-      LOG_LEVEL                 = "INFO"
+      LOG_LEVEL                = var.log_level
+    }
+
+    secret_environment_variables {
+      key        = "LINE_CHANNEL_ACCESS_TOKEN"
+      project_id = var.project_id
+      secret     = google_secret_manager_secret.line_channel_access_token.secret_id
+      version    = "latest"
+    }
+
+    secret_environment_variables {
+      key        = "LINE_TO_USER_ID"
+      project_id = var.project_id
+      secret     = google_secret_manager_secret.line_user_id.secret_id
+      version    = "latest"
     }
   }
 
-  depends_on = [google_project_service.services]
+  depends_on = [
+    google_project_service.services,
+    google_bigquery_dataset.dataset,
+    google_bigquery_table.loto6_history,
+    google_bigquery_table.loto7_history,
+    google_bigquery_table.prediction_runs,
+    google_secret_manager_secret.line_channel_access_token,
+    google_secret_manager_secret.line_user_id,
+    google_secret_manager_secret_version.line_channel_access_token,
+    google_secret_manager_secret_version.line_user_id,
+  ]
 }
