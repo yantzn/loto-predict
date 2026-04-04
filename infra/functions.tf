@@ -79,7 +79,7 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
       GCP_PROJECT_ID   = var.project_id
       GCP_REGION       = var.region
       BIGQUERY_DATASET = google_bigquery_dataset.dataset.dataset_id
-        BIGQUERY_DATASET = var.bq_dataset
+      BIGQUERY_DATASET = var.bq_dataset
       RAW_BUCKET_NAME  = google_storage_bucket.raw_bucket.name
       LOG_LEVEL        = var.log_level
       LOG_JSON         = var.log_json
@@ -123,7 +123,7 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
       GCP_PROJECT_ID      = var.project_id
       GCP_REGION          = var.region
       BIGQUERY_DATASET    = google_bigquery_dataset.dataset.dataset_id
-        BIGQUERY_DATASET    = var.bq_dataset
+      BIGQUERY_DATASET    = var.bq_dataset
       HISTORY_LIMIT_LOTO6 = tostring(var.history_limit_loto6)
       HISTORY_LIMIT_LOTO7 = tostring(var.history_limit_loto7)
       LOG_LEVEL           = var.log_level
