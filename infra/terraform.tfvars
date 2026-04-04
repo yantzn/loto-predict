@@ -1,5 +1,3 @@
-project_id  = "your-gcp-project-id"
-region      = "asia-northeast1"
 app_timezone = "Asia/Tokyo"
 
 dataset_id = "loto_predict"
@@ -11,22 +9,3 @@ log_level                = "INFO"
 
 # null のままなら "${project_id}-loto-raw" が使われる
 raw_bucket_name = null
-
-# bootstrap で作成した source bucket を指定
-source_bucket_name = "your-function-source-bucket"
-
-# deploy-function-source.yml がアップロードする object path
-fetch_function_source_object  = "functions/fetch_loto_results/function-source.zip"
-import_function_source_object = "functions/import_loto_results_to_bq/function-source.zip"
-notify_function_source_object = "functions/generate_prediction_and_notify/function-source.zip"
-
-# bootstrap で作成した Service Account を指定
-#functions_runtime_service_account_email  = "loto-functions-runtime@your-gcp-project-id.iam.gserviceaccount.com"
-#scheduler_invoker_service_account_email  = "loto-scheduler-invoker@your-gcp-project-id.iam.gserviceaccount.com"
-
-history_limit_loto6 = 100
-history_limit_loto7 = 100
-
-# GitHub Actions では secrets から渡す想定
-line_channel_access_token = "line_channel_access_token"
-line_to_user_id           = "line_user_id"
