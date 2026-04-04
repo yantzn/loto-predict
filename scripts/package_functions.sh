@@ -13,7 +13,7 @@ package_function() {
   temp_dir="$(mktemp -d)"
 
   mkdir -p "${temp_dir}/src"
-  cp -R "${ROOT_DIR}/src/loto_predict" "${temp_dir}/src/"
+  cp -R "${ROOT_DIR}/src/" "${temp_dir}/src/"
   cp "${ROOT_DIR}/functions/${func_name}/main.py" "${temp_dir}/main.py"
   cp "${ROOT_DIR}/functions/${func_name}/requirements.txt" "${temp_dir}/requirements.txt"
 
