@@ -123,14 +123,14 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     secret_environment_variables {
       key        = "LINE_CHANNEL_ACCESS_TOKEN"
       project_id = var.project_id
-      secret     = google_secret_manager_secret.line_channel_access_token.secret_id
+      secret     = var.line_channel_access_token_secret_id
       version    = "latest"
     }
 
     secret_environment_variables {
       key        = "LINE_TO_USER_ID"
       project_id = var.project_id
-      secret     = google_secret_manager_secret.line_user_id.secret_id
+      secret     = var.line_user_id_secret_id
       version    = "latest"
     }
   }
@@ -141,9 +141,5 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     google_bigquery_table.loto6_history,
     google_bigquery_table.loto7_history,
     google_bigquery_table.prediction_runs,
-    google_secret_manager_secret.line_channel_access_token,
-    google_secret_manager_secret.line_user_id,
-    google_secret_manager_secret_version.line_channel_access_token,
-    google_secret_manager_secret_version.line_user_id,
   ]
 }
