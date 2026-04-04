@@ -32,10 +32,10 @@ env:
   TF_INPUT: false
   TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
 
-  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ secrets.GCP_REGION }}
-  TFSTATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-  FUNCTION_SOURCE_BUCKET: ${{ secrets.FUNCTION_SOURCE_BUCKET }}
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  TFSTATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  FUNCTION_SOURCE_BUCKET: ${{ vars.FUNCTION_SOURCE_BUCKET }}
 
   WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
   WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
