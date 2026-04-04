@@ -5,7 +5,7 @@ output "dataset_id" {
 
 output "raw_bucket_name" {
   description = "Raw CSV bucket name"
-  value       = local.resolved_raw_bucket_name
+  value       = google_storage_bucket.raw_bucket.name
 }
 
 output "fetch_function_name" {

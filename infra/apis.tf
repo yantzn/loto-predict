@@ -5,15 +5,16 @@ resource "google_project_service" "services" {
     "cloudbuild.googleapis.com",
     "cloudfunctions.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "eventarc.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
+    "secretmanager.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
-    "cloudscheduler.googleapis.com"
   ])
 
   project            = var.project_id

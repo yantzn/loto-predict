@@ -9,6 +9,12 @@ variable "region" {
   default     = "asia-northeast1"
 }
 
+variable "app_env" {
+  description = "Application environment name"
+  type        = string
+  default     = "prod"
+}
+
 variable "app_timezone" {
   description = "Application timezone"
   type        = string
@@ -28,15 +34,27 @@ variable "runtime" {
 }
 
 variable "function_timeout_seconds" {
-  description = "Default timeout for Cloud Functions"
+  description = "Timeout for Cloud Functions"
   type        = number
   default     = 120
 }
 
 variable "function_available_memory" {
-  description = "Default memory for Cloud Functions"
+  description = "Memory size for Cloud Functions"
   type        = string
   default     = "512M"
+}
+
+variable "function_min_instance_count" {
+  description = "Minimum instance count for Cloud Functions"
+  type        = number
+  default     = 0
+}
+
+variable "function_max_instance_count" {
+  description = "Maximum instance count for Cloud Functions"
+  type        = number
+  default     = 2
 }
 
 variable "log_level" {
@@ -45,8 +63,14 @@ variable "log_level" {
   default     = "INFO"
 }
 
+variable "log_json" {
+  description = "Whether to enable JSON structured logs"
+  type        = string
+  default     = "true"
+}
+
 variable "raw_bucket_name" {
-  description = "Bucket name for scraped/manual CSV files. If null, use ${project_id}-loto-raw."
+  description = "Bucket name for raw CSV files. If null, use ${project_id}-loto-raw."
   type        = string
   default     = null
 }
@@ -103,6 +127,32 @@ variable "line_user_id_secret_id" {
   type        = string
 }
 
-locals {
-  resolved_raw_bucket_name = coalesce(var.raw_bucket_name, "${var.project_id}-loto-raw")
+variable "scheduler_time_zone" {
+  description = "Time zone used by Cloud Scheduler"
+  type        = string
+  default     = "Asia/Tokyo"
+}
+
+variable "fetch_loto6_cron" {
+  description = "Cron for LOTO6 fetch job"
+  type        = string
+  default     = "5 19 * * 1,4"
+}
+
+variable "fetch_loto7_cron" {
+  description = "Cron for LOTO7 fetch job"
+  type        = string
+  default     = "5 19 * * 5"
+}
+
+variable "notify_loto6_cron" {
+  description = "Cron for LOTO6 notify job"
+  type        = string
+  default     = "15 19 * * 1,4"
+}
+
+variable "notify_loto7_cron" {
+  description = "Cron for LOTO7 notify job"
+  type        = string
+  default     = "15 19 * * 5"
 }
