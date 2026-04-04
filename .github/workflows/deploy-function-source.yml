@@ -5,13 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'main.py'
-      - 'requirements.txt'
-      - 'config/**'
-      - 'utils/**'
-      - 'domain/**'
-      - 'infrastructure/**'
-      - 'usecases/**'
+      - 'functions/**'
+      - 'src/**'
+      - 'scripts/package_functions.sh'
       - '.github/workflows/deploy-function-source.yml'
   workflow_dispatch:
 
@@ -20,15 +16,13 @@ permissions:
   id-token: write
 
 env:
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ vars.GCP_REGION }}
-  SOURCE_BUCKET_NAME: ${{ vars.SOURCE_BUCKET_NAME }}
-  FUNCTION_SOURCE_OBJECT: ${{ vars.FUNCTION_SOURCE_OBJECT }}
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+  SOURCE_BUCKET_NAME: ${{ secrets.FUNCTION_SOURCE_BUCKET }}
 
 jobs:
   package-and-upload:
     runs-on: ubuntu-latest
-
     defaults:
       run:
         shell: bash
@@ -46,26 +40,23 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify target variables
-        run: |
-          test -n "${SOURCE_BUCKET_NAME}"
-          test -n "${FUNCTION_SOURCE_OBJECT}"
-          echo "SOURCE_BUCKET_NAME=${SOURCE_BUCKET_NAME}"
-          echo "FUNCTION_SOURCE_OBJECT=${FUNCTION_SOURCE_OBJECT}"
+      - name: Package functions
+        run: bash ./scripts/package_functions.sh
 
-      - name: Create function source archive
+      - name: Upload fetch_loto_results source
         run: |
-          rm -f function-source.zip
-          zip -r function-source.zip \
-            main.py \
-            requirements.txt \
-            config \
-            utils \
-            domain \
-            infrastructure \
-            usecases
-          ls -l function-source.zip
+          gcloud storage cp \
+            dist/fetch_loto_results.zip \
+            gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip
 
-      - name: Upload archive to GCS
+      - name: Upload import_loto_results_to_bq source
         run: |
-          gsutil cp function-source.zip "gs://${SOURCE_BUCKET_NAME}/${FUNCTION_SOURCE_OBJECT}"
+          gcloud storage cp \
+            dist/import_loto_results_to_bq.zip \
+            gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results_to_bq/function-source.zip
+
+      - name: Upload generate_prediction_and_notify source
+        run: |
+          gcloud storage cp \
+            dist/generate_prediction_and_notify.zip \
+            gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip
