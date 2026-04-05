@@ -1,248 +1,575 @@
-# 🎯 Loto Predict Line
 
-ロト6・ロト7の過去当選データをもとに、
-**統計集計 → 重み付き予想番号生成 → LINE通知** までを自動実行する
-**個人利用向けのGCPサーバーレスシステム**です。
+# loto-predict
 
----
-
-## 🚀 特徴
-
-- 🎲 ロト6 / ロト7の予想番号を自動生成
-- 📊 BigQueryを用いた過去データ分析
-- ⚖️ 重み付きランダムによる現実的な予測
-- 📩 LINE Messaging APIで自動通知
-- ☁️ Cloud Functions + Schedulerによる完全自動化
-- 🐳 Docker Composeでローカル実行可能
-- 🏗 Terraformでインフラ管理
+GCP ベースの **ロト6・ロト7 予想番号生成 & LINE 通知システム** です。
+過去当せん番号データを取得し、BigQuery に蓄積し、統計ベースで予想番号を生成して LINE に通知します。
 
 ---
 
-## 🧠 システム概要
+## 概要
+
+このシステムは、以下の流れで動作します。
 
 ```text
 Cloud Scheduler
-   ↓
-Cloud Functions (entry_point)
-   ↓
-UseCase層
-   ├─ BigQuery から履歴取得
-   ├─ 統計集計
-   ├─ スコア算出
-   ├─ 予想番号生成
-   ├─ prediction_runs 保存
-   └─ LINE通知
+  ↓
+fetch_loto_results
+  ↓
+Pub/Sub
+  ↓
+import_loto_results_to_bq
+  ↓
+Pub/Sub
+  ↓
+generate_prediction_and_notify
 ```
+
+### 処理の流れ
+
+1. Cloud Scheduler が抽選日夜に `fetch_loto_results` を起動
+2. `fetch_loto_results` が公式ページから最新当せん結果を取得
+3. 取得結果を CSV 化して GCS に保存
+4. GCS キーを Pub/Sub メッセージとして publish
+5. `import_loto_results_to_bq` が Pub/Sub 経由で起動
+6. CSV を BigQuery に取り込み
+7. 取り込み完了メッセージを Pub/Sub に publish
+8. `generate_prediction_and_notify` が Pub/Sub 経由で起動
+9. BigQuery の履歴データから予想番号を生成
+10. LINE に Push 通知
+11. 各処理結果を `execution_logs` に記録
 
 ---
 
-## 🗂 ディレクトリ構成
+## 特徴
+
+* GCP サーバーレス構成
+* Pub/Sub による疎結合な関数連携
+* BigQuery による履歴管理
+* `execution_id` による一連処理の追跡
+* 重複インポート防止
+* 重複通知防止
+* `common/` による関数共通処理の集約
+
+---
+
+## アーキテクチャ
 
 ```text
-loto-predict/
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── README.md
-├── main.py
-├── requirements.txt
-├── config/
-├── domain/
-├── usecases/
-├── infrastructure/
-├── utils/
-├── tests/
-├── docs/
-├── bootstrap/         # Terraform（初期構築）
-├── infra/             # Terraform（本体）
-├── .devcontainer/     # Terraform作業専用
-└── .github/workflows/
+Cloud Scheduler
+  └─> fetch-loto-results (Cloud Functions Gen2)
+         ├─ みずほ公式ページから最新結果取得
+         ├─ CSV化
+         ├─ GCS(raw bucket) に保存
+         └─ Pub/Sub(import-loto-results) に publish
+
+Pub/Sub(import-loto-results)
+  └─> import-loto-results-to-bq (Cloud Functions Gen2)
+         ├─ GCS の CSV を読み込み
+         ├─ 重複チェック
+         ├─ BigQuery に取り込み
+         └─ Pub/Sub(notify-loto-prediction) に publish
+
+Pub/Sub(notify-loto-prediction)
+  └─> generate-prediction-and-notify (Cloud Functions Gen2)
+         ├─ BigQuery から履歴取得
+         ├─ 統計ベース予想生成
+         ├─ prediction_runs に保存
+         └─ LINE に Push 通知
 ```
 
 ---
 
-## 🧩 技術スタック
-
-| 分類     | 技術                 |
-| -------- | -------------------- |
-| 言語     | Python 3.12          |
-| 実行基盤 | Cloud Functions Gen2 |
-| データ   | BigQuery             |
-| 通知     | LINE Messaging API   |
-| IaC      | Terraform            |
-| ローカル | Docker Compose       |
-| 認証     | gcloud ADC           |
-
----
-
-## ⚙️ セットアップ
-
-### 1. リポジトリ取得
-
-```bash
-git clone https://github.com/yantzn/loto-predict.git
-cd loto-predict
-```
-
----
-
-### 2. 環境変数設定
-
-```bash
-cp .env.example .env
-```
-
-`.env` を編集してください：
-
-```env
-LINE_CHANNEL_ACCESS_TOKEN=xxx
-LINE_USER_ID=xxx
-```
-
----
-
-### 3. GCP認証（必須）
-
-```bash
-gcloud auth application-default login
-gcloud config set project loto-predict-491915
-```
-
----
-
-### 4. ローカル起動
-
-```bash
-docker compose up --build
-```
-
-起動後：
+## ディレクトリ構成
 
 ```text
-http://localhost:8080
+.
+├─ .github/
+│  └─ workflows/
+│     ├─ deploy-function-source.yml
+│     │   └─ Cloud Functions のソースを zip 化して GCS にアップロード
+│     │      （common/ を各 function に同梱する処理もここで実施）
+│     │
+│     └─ terraform-infra.yml
+│         └─ Terraform によるインフラ構築（Cloud Functions / BQ / Pub/Sub 等）
+│
+├─ functions/
+│  ├─ common/
+│  │  ├─ __init__.py
+│  │  ├─ execution_log.py
+│  │  │   └─ BigQuery execution_logs への書き込み & Cloud Logging 出力
+│  │  │
+│  │  ├─ pubsub_message.py
+│  │  │   └─ Pub/Sub メッセージの decode / validate / encode 共通処理
+│  │  │
+│  │  └─ time_utils.py
+│  │      └─ JST 時刻生成・ISOフォーマット変換などの共通ユーティリティ
+│  │
+│  ├─ fetch_loto_results/
+│  │  ├─ main.py
+│  │  │   └─ Cloud Scheduler から起動される入口
+│  │  │      ・公式サイトから当せん結果取得
+│  │  │      ・CSV生成
+│  │  │      ・GCS保存
+│  │  │      ・Pub/Sub publish（import トリガー）
+│  │  │
+│  │  └─ requirements.txt
+│  │      └─ requests / BeautifulSoup 等の依存関係
+│  │
+│  ├─ import_loto_results_to_bq/
+│  │  ├─ main.py
+│  │  │   └─ Pub/Sub push で起動
+│  │  │      ・GCS の CSV を読み込み
+│  │  │      ・重複チェック（draw_no / file_name）
+│  │  │      ・BigQuery へ insert
+│  │  │      ・Pub/Sub publish（notify トリガー）
+│  │  │
+│  │  └─ requirements.txt
+│  │      └─ google-cloud-bigquery / storage 等
+│  │
+│  └─ generate_prediction_and_notify/
+│     ├─ main.py
+│     │   └─ Pub/Sub push で起動
+│     │      ・BigQuery から履歴取得
+│     │      ・予想番号生成（重み付きランダム）
+│     │      ・prediction_runs に保存
+│     │      ・LINE Push 通知
+│     │
+│     └─ requirements.txt
+│         └─ BigQuery / LINE API 用ライブラリ
+│
+├─ infra/
+│  ├─ backend.tf
+│  │   └─ Terraform の state 管理（GCS backend 設定）
+│  │
+│  ├─ main.tf
+│  │   └─ GCP リソース定義の本体
+│  │      ・Cloud Functions Gen2
+│  │      ・Pub/Sub
+│  │      ・BigQuery
+│  │      ・Cloud Scheduler
+│  │      ・IAM
+│  │
+│  ├─ providers.tf
+│  │   └─ Google Provider 設定（project / region）
+│  │
+│  ├─ variables.tf
+│  │   └─ 環境依存パラメータ定義
+│  │      （project_id / region / dataset / secret_id 等）
+│  │
+│  └─ versions.tf
+│      └─ Terraform / Provider のバージョン固定
+│
+├─ scripts/
+│  └─ package_functions.sh
+│      └─ 各 Cloud Functions を zip 化するスクリプト
+│         ・common/ を各 function にコピー
+│         ・dist/ に成果物を出力
+│
+├─ dist/
+│  └─ （自動生成）
+│      ├─ fetch_loto_results.zip
+│      ├─ import_loto_results_to_bq.zip
+│      └─ generate_prediction_and_notify.zip
+│
+└─ README.md
+    └─ プロジェクト全体の説明ドキュメント
 ```
 
 ---
 
-## 🧪 動作確認
+## Cloud Functions の役割
+
+### 1. fetch_loto_results
+
+役割:
+
+* Cloud Scheduler から HTTP 起動
+* ロト6 / ロト7 の最新当せん結果を取得
+* CSV に変換
+* GCS に保存
+* import 用 Pub/Sub にメッセージ送信
+
+入力:
+
+```json
+{
+  "lottery_type": "LOTO6"
+}
+```
+
+出力メッセージ例:
+
+```json
+{
+  "event_type": "FETCH_COMPLETED",
+  "execution_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "lottery_type": "LOTO6",
+  "gcs_bucket": "your-raw-bucket",
+  "gcs_object": "loto6/draw_date=2026-04-05/draw_no=1234/xxxx.csv",
+  "draw_no": 1234,
+  "draw_date": "2026-04-05",
+  "fetched_at": "2026-04-05T19:05:00+09:00"
+}
+```
+
+---
+
+### 2. import_loto_results_to_bq
+
+役割:
+
+* Pub/Sub push で起動
+* GCS の CSV を読み込み
+* 重複チェック
+* BigQuery の履歴テーブルに取り込み
+* notify 用 Pub/Sub にメッセージ送信
+
+重複防止:
+
+* `source_file_name`
+* `draw_no`
+
+---
+
+### 3. generate_prediction_and_notify
+
+役割:
+
+* Pub/Sub push で起動
+* BigQuery 履歴データを読み込み
+* 出現頻度ベースの重み付きランダムで予想生成
+* `prediction_runs` に保存
+* LINE Push 通知
+
+重複防止:
+
+* `run_id = execution_id`
+
+---
+
+## execution_id とは
+
+`execution_id` は、**1回の処理全体を識別するID** です。
+
+この ID を使って、
+
+* fetch
+* import
+* notify
+
+のすべてを同じ単位で追跡します。
+
+例:
+
+```text
+execution_id = 20260405-loto6-001
+```
+
+用途:
+
+* 重複実行防止
+* ログ追跡
+* 障害調査
+
+---
+
+## BigQuery テーブル
+
+### loto6_history
+
+ロト6当せん履歴
+
+主なカラム:
+
+* `draw_no`
+* `draw_date`
+* `number1 ... number6`
+* `bonus_number`
+* `source_file_name`
+* `ingested_at`
+
+### loto7_history
+
+ロト7当せん履歴
+
+主なカラム:
+
+* `draw_no`
+* `draw_date`
+* `number1 ... number7`
+* `bonus_number1`
+* `bonus_number2`
+* `source_file_name`
+* `ingested_at`
+
+### prediction_runs
+
+予想生成結果
+
+主なカラム:
+
+* `run_id`
+* `lottery_type`
+* `prediction_numbers`
+* `created_at`
+* `created_date`
+
+### execution_logs
+
+実行ログ
+
+主なカラム:
+
+* `execution_id`
+* `function_name`
+* `lottery_type`
+* `stage`
+* `status`
+* `message`
+* `gcs_bucket`
+* `gcs_object`
+* `draw_no`
+* `run_id`
+* `error_type`
+* `error_detail`
+* `executed_at`
+* `executed_date`
+
+---
+
+## 重複防止の考え方
+
+### import 側
+
+以下のどちらかに該当したら取り込みをスキップします。
+
+* 同じ `source_file_name`
+* 同じ `draw_no`
+
+### notify 側
+
+以下に該当したら通知をスキップします。
+
+* 同じ `run_id` が `prediction_runs` に存在
+
+---
+
+## 共通モジュール
+
+`functions/common/` では次を共通化しています。
+
+### execution_log.py
+
+* `execution_logs` への書き込み
+* Cloud Logging との統一出力
+
+### pubsub_message.py
+
+* Pub/Sub push リクエストの decode
+* 必須項目チェック
+* publish 用 bytes 生成
+
+### time_utils.py
+
+* JST 現在時刻取得
+* ISO 文字列変換
+
+---
+
+## GitHub Actions
+
+### 1. deploy-function-source.yml
+
+役割:
+
+* `functions/` 配下のソースを zip 化
+* `common/` を各 zip に同梱
+* GCS の function source bucket にアップロード
+
+アップロード先:
+
+```text
+functions/fetch_loto_results/function-source.zip
+functions/import_loto_results/function-source.zip
+functions/generate_prediction_and_notify/function-source.zip
+```
+
+---
+
+### 2. terraform-infra.yml
+
+役割:
+
+* Terraform init / validate / plan / apply
+* Cloud Functions / BigQuery / Pub/Sub / Scheduler / IAM を構築
+
+---
+
+## 必要な GitHub Variables
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+TFSTATE_BUCKET
+FUNCTION_SOURCE_BUCKET
+BQ_DATASET
+HISTORY_LIMIT_LOTO6
+HISTORY_LIMIT_LOTO7
+LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID
+LINE_USER_ID_SECRET_ID
+```
+
+---
+
+## 必要な GitHub Secrets
+
+```text
+WIF_PROVIDER
+WIF_SERVICE_ACCOUNT
+FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL
+SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL
+```
+
+---
+
+## 必要な GCP リソース前提
+
+この Terraform は、以下を作成または利用します。
+
+* Cloud Functions Gen2
+* Cloud Scheduler
+* Pub/Sub Topic / Subscription
+* BigQuery Dataset / Tables
+* GCS Raw Bucket
+* Secret Manager
+* IAM Binding
+
+---
+
+## Secret Manager
+
+以下 2 つの secret は事前作成前提です。
+
+```text
+LINE_CHANNEL_ACCESS_TOKEN
+LINE_TO_USER_ID
+```
+
+Terraform では secret の**ID**を変数で受け取り、Cloud Functions の Secret Environment Variables に設定します。
+
+---
+
+## スケジュール
 
 ### ロト6
 
-```bash
-curl -X POST http://localhost:8080 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "lottery_type": "LOTO6",
-    "draw_no": 2000
-  }'
-```
+* 月曜・木曜
+* 19:05 JST
 
----
+```text
+5 19 * * 1,4
+```
 
 ### ロト7
 
-```bash
-curl -X POST http://localhost:8080 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "lottery_type": "LOTO7",
-    "draw_no": 650
-  }'
+* 金曜
+* 19:05 JST
+
+```text
+5 19 * * 5
 ```
 
 ---
 
-## 🌍 環境変数一覧
-
-| 変数                      | 説明              |
-| ------------------------- | ----------------- |
-| GCP_PROJECT_ID            | GCPプロジェクトID |
-| BIGQUERY_DATASET          | データセット      |
-| LINE_CHANNEL_ACCESS_TOKEN | LINEトークン      |
-| LINE_USER_ID              | 通知先            |
-| STATS_TARGET_DRAWS        | 集計対象回数      |
-| PREDICTION_COUNT          | 生成口数          |
-
-詳細は `.env.example` を参照。
-
----
-
-## ⏰ スケジューラー
-
-| 種類  | cron           |
-| ----- | -------------- |
-| ロト6 | `5 19 * * 1,4` |
-| ロト7 | `5 19 * * 5`   |
-
----
-
-## 🏗 Terraform（インフラ）
-
-Terraform操作は `.devcontainer` を使用します。
-
-### 起動方法
-
-VS Codeで：
-
-```
-Reopen in Container
-```
-
----
-
-### 実行
+## ローカルでの zip 作成
 
 ```bash
-cd bootstrap
-terraform init
-terraform apply
+bash ./scripts/package_functions.sh
+```
 
+生成物:
+
+```text
+dist/fetch_loto_results.zip
+dist/import_loto_results_to_bq.zip
+dist/generate_prediction_and_notify.zip
+```
+
+確認例:
+
+```bash
+unzip -l dist/fetch_loto_results.zip
+```
+
+`common/` が含まれていれば OK です。
+
+---
+
+## デプロイ手順
+
+### 1. function source zip をアップロード
+
+GitHub Actions:
+
+* `Deploy Function Source`
+
+### 2. Terraform 適用
+
+GitHub Actions:
+
+* `Terraform Infra`
+
+---
+
+## ログ確認
+
+### BigQuery
+
+`execution_logs` を使って、1回の実行全体を追えます。
+
+例:
+
+```sql
+SELECT
+  execution_id,
+  function_name,
+  stage,
+  status,
+  message,
+  executed_at
+FROM `YOUR_PROJECT.YOUR_DATASET.execution_logs`
+WHERE execution_id = '対象execution_id'
+ORDER BY executed_at ASC
+```
+
+### Cloud Logging
+
+`execution_id` で検索すると追いやすいです。
+
+例:
+
+```text
+jsonPayload.execution_id="対象execution_id"
 ```
 
 ---
 
-## 🔥 エラーハンドリング
+## 設計方針
 
-主なエラー分類：
+このシステムは、以下を重視しています。
 
-- CONFIG_ERROR
-- VALIDATION_ERROR
-- BIGQUERY_ERROR
-- PREDICTION_ERROR
-- LINE_ERROR
-
----
-
-## ⚠️ 注意事項
-
-- 本プロジェクトは個人利用前提です
-- 当選を保証するものではありません
-- 秘密情報は必ず環境変数 or Secret Managerで管理してください
+* 取得・取込・通知の責務分離
+* Pub/Sub による非同期連携
+* GCS を実データ置き場、Pub/Sub をイベント通知として利用
+* `execution_id` による一連処理のトレース
+* BigQuery による監査・検証しやすい構成
+* Secret のコード直書き禁止
 
 ---
 
-## 🧭 開発方針
+## 注意点
 
-| 項目         | 方針            |
-| ------------ | --------------- |
-| ローカル実行 | Docker Compose  |
-| インフラ作業 | `.devcontainer` |
-| 仮想環境     | 使用しない      |
-| 再現性       | コンテナで担保  |
-
----
-
-## 💡 今後の拡張
-
-- UI（Web / Flutter）
-- 予測ロジックの高度化（機械学習）
-- 当選結果との比較分析
-- 通知フォーマット改善
-
----
-
-## 👤 Author
-
-zono
-
----
+* 取得元ページの HTML 構造が変わると `fetch_loto_results` の解析ロジック修正が必要です
+* 予想番号は統計参考値であり、当せんを保証するものではありません
+* 現在の予想ロジックは軽量な重み付きランダム方式です
+* 機械学習モデルは導入していません

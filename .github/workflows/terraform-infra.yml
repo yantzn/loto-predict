@@ -8,15 +8,6 @@ on:
       - "infra/**"
       - ".github/workflows/terraform-infra.yml"
   workflow_dispatch:
-    inputs:
-      apply:
-        description: "Run terraform apply"
-        required: false
-        default: "true"
-        type: choice
-        options:
-          - "false"
-          - "true"
 
 permissions:
   contents: read
@@ -30,18 +21,16 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
-
   FUNCTION_SOURCE_BUCKET: ${{ vars.FUNCTION_SOURCE_BUCKET }}
   BQ_DATASET: ${{ vars.BQ_DATASET }}
   HISTORY_LIMIT_LOTO6: ${{ vars.HISTORY_LIMIT_LOTO6 }}
   HISTORY_LIMIT_LOTO7: ${{ vars.HISTORY_LIMIT_LOTO7 }}
-
   LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: ${{ vars.LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID }}
   LINE_USER_ID_SECRET_ID: ${{ vars.LINE_USER_ID_SECRET_ID }}
 
-  FETCH_FUNCTION_SOURCE_OBJECT: ${{ vars.FETCH_FUNCTION_SOURCE_OBJECT }}
-  IMPORT_FUNCTION_SOURCE_OBJECT: ${{ vars.IMPORT_FUNCTION_SOURCE_OBJECT }}
-  NOTIFY_FUNCTION_SOURCE_OBJECT: ${{ vars.NOTIFY_FUNCTION_SOURCE_OBJECT }}
+  FETCH_FUNCTION_SOURCE_OBJECT: functions/fetch_loto_results/function-source.zip
+  IMPORT_FUNCTION_SOURCE_OBJECT: functions/import_loto_results/function-source.zip
+  NOTIFY_FUNCTION_SOURCE_OBJECT: functions/generate_prediction_and_notify/function-source.zip
 
 jobs:
   terraform:
@@ -50,13 +39,30 @@ jobs:
     defaults:
       run:
         shell: bash
+        working-directory: infra
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare Terraform plugin cache
+      - name: Create plugin cache dir
         run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+      - name: Validate required variables
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}"
+          test -n "${GCP_REGION}"
+          test -n "${TFSTATE_BUCKET}"
+          test -n "${FUNCTION_SOURCE_BUCKET}"
+          test -n "${BQ_DATASET}"
+          test -n "${HISTORY_LIMIT_LOTO6}"
+          test -n "${HISTORY_LIMIT_LOTO7}"
+          test -n "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}"
+          test -n "${LINE_USER_ID_SECRET_ID}"
+          test -n "${FETCH_FUNCTION_SOURCE_OBJECT}"
+          test -n "${IMPORT_FUNCTION_SOURCE_OBJECT}"
+          test -n "${NOTIFY_FUNCTION_SOURCE_OBJECT}"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -68,54 +74,47 @@ jobs:
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: latest
+
+      - name: Verify gcloud project
+        run: |
+          set -euo pipefail
+          gcloud config set project "${GCP_PROJECT_ID}"
+          gcloud config get-value project
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      - name: Verify required variables
-        run: |
-          set -euo pipefail
-
-          test -n "${TFSTATE_BUCKET}"
-          test -n "${GCP_PROJECT_ID}"
-          test -n "${GCP_REGION}"
-          test -n "${FUNCTION_SOURCE_BUCKET}"
-          test -n "${BQ_DATASET}"
-          test -n "${HISTORY_LIMIT_LOTO6}"
-          test -n "${HISTORY_LIMIT_LOTO7}"
-          test -n "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}"
-          test -n "${LINE_USER_ID_SECRET_ID}"
-          test -n "${FETCH_FUNCTION_SOURCE_OBJECT}"
-          test -n "${IMPORT_FUNCTION_SOURCE_OBJECT}"
-          test -n "${NOTIFY_FUNCTION_SOURCE_OBJECT}"
-
-      - name: Terraform fmt check
-        working-directory: infra
-        run: terraform fmt -check -recursive
-
-      - name: Terraform init
-        working-directory: infra
-        run: |
-          terraform init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}"
-
-      - name: Terraform validate
-        working-directory: infra
-        run: terraform validate
-
-      - name: Terraform plan
-        id: plan
-        working-directory: infra
+      - name: Validate required secrets
         env:
           FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
           SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
         run: |
           set -euo pipefail
-
           test -n "${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}"
           test -n "${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TFSTATE_BUCKET}"
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        env:
+          FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
+          SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
+        run: |
+          set -euo pipefail
 
           terraform plan \
             -lock-timeout=5m \
@@ -137,10 +136,12 @@ jobs:
       - name: Upload tfplan artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan
+          name: terraform-plan
           path: infra/tfplan
+          if-no-files-found: error
 
       - name: Terraform apply
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true')
-        working-directory: infra
-        run: terraform apply -lock-timeout=5m -auto-approve tfplan
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          terraform apply -lock-timeout=5m -auto-approve tfplan

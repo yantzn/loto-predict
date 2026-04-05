@@ -104,23 +104,32 @@ resource "google_bigquery_table" "prediction_runs" {
 }
 
 resource "google_bigquery_table" "execution_logs" {
-  project             = var.project_id
-  dataset_id          = google_bigquery_dataset.dataset.dataset_id
-  table_id            = local.table_ids.execution_logs
-  deletion_protection = false
+  project    = var.project_id
+  dataset_id = google_bigquery_dataset.dataset.dataset_id
+  table_id   = "execution_logs"
+  labels     = local.common_labels
 
-  time_partitioning {
-    type  = "DAY"
-    field = "executed_date"
-  }
+  deletion_protection = false
 
   schema = jsonencode([
     { name = "execution_id", type = "STRING", mode = "REQUIRED" },
     { name = "function_name", type = "STRING", mode = "REQUIRED" },
     { name = "lottery_type", type = "STRING", mode = "NULLABLE" },
+    { name = "stage", type = "STRING", mode = "NULLABLE" },
     { name = "status", type = "STRING", mode = "REQUIRED" },
     { name = "message", type = "STRING", mode = "NULLABLE" },
+    { name = "gcs_bucket", type = "STRING", mode = "NULLABLE" },
+    { name = "gcs_object", type = "STRING", mode = "NULLABLE" },
+    { name = "draw_no", type = "INTEGER", mode = "NULLABLE" },
+    { name = "run_id", type = "STRING", mode = "NULLABLE" },
+    { name = "error_type", type = "STRING", mode = "NULLABLE" },
+    { name = "error_detail", type = "STRING", mode = "NULLABLE" },
     { name = "executed_at", type = "TIMESTAMP", mode = "REQUIRED" },
     { name = "executed_date", type = "DATE", mode = "REQUIRED" }
   ])
+
+  time_partitioning {
+    type  = "DAY"
+    field = "executed_date"
+  }
 }
