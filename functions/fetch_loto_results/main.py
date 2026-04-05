@@ -21,17 +21,16 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.environ["GCP_PROJECT_ID"]
-RAW_BUCKET_NAME = os.environ["RAW_BUCKET_NAME"]
-IMPORT_TOPIC_NAME = os.environ["IMPORT_TOPIC_NAME"]
+RAW_BUCKET_NAME = os.environ["GCS_BUCKET_RAW"]
+IMPORT_TOPIC_NAME = os.environ["PUBSUB_IMPORT_TOPIC"]
 
 LOTO6_PAGE_URL = "https://www.mizuhobank.co.jp/takarakuji/check/loto/loto6/index.html"
 LOTO7_PAGE_URL = "https://www.mizuhobank.co.jp/takarakuji/check/loto/loto7/index.html"
-
 REQUEST_TIMEOUT_SECONDS = 60
 
 storage_client = storage.Client(project=PROJECT_ID)
 publisher = pubsub_v1.PublisherClient()
-topic_path = publisher.topic_path(PROJECT_ID, IMPORT_TOPIC_NAME)
+import_topic_path = publisher.topic_path(PROJECT_ID, IMPORT_TOPIC_NAME)
 
 
 @dataclass(frozen=True)
@@ -77,7 +76,7 @@ def _extract_draw_header(text: str, lottery_type: str) -> tuple[int, str]:
 
 
 def _iter_two_digit_numbers(text: str) -> Iterable[int]:
-    for value in re.findall(r"(?<!\d)(\d{1,2})(?!\d)", text):
+    for value in re.findall(r"(?<!\d)\d{1,2}(?!\d)", text):
         yield int(value)
 
 
@@ -153,23 +152,52 @@ def _to_csv(result: LotoResult) -> str:
     writer = csv.writer(buffer)
 
     if result.lottery_type == "LOTO6":
-        writer.writerow([
-            "draw_no", "draw_date", "number1", "number2", "number3",
-            "number4", "number5", "number6", "bonus_number"
-        ])
-        writer.writerow([
-            result.draw_no, result.draw_date, *result.main_numbers, result.bonus_numbers[0]
-        ])
+        writer.writerow(
+            [
+                "draw_no",
+                "draw_date",
+                "number1",
+                "number2",
+                "number3",
+                "number4",
+                "number5",
+                "number6",
+                "bonus_number",
+            ]
+        )
+        writer.writerow(
+            [
+                result.draw_no,
+                result.draw_date,
+                *result.main_numbers,
+                result.bonus_numbers[0],
+            ]
+        )
     else:
-        writer.writerow([
-            "draw_no", "draw_date", "number1", "number2", "number3",
-            "number4", "number5", "number6", "number7",
-            "bonus_number1", "bonus_number2"
-        ])
-        writer.writerow([
-            result.draw_no, result.draw_date, *result.main_numbers,
-            result.bonus_numbers[0], result.bonus_numbers[1]
-        ])
+        writer.writerow(
+            [
+                "draw_no",
+                "draw_date",
+                "number1",
+                "number2",
+                "number3",
+                "number4",
+                "number5",
+                "number6",
+                "number7",
+                "bonus_number1",
+                "bonus_number2",
+            ]
+        )
+        writer.writerow(
+            [
+                result.draw_no,
+                result.draw_date,
+                *result.main_numbers,
+                result.bonus_numbers[0],
+                result.bonus_numbers[1],
+            ]
+        )
 
     return buffer.getvalue()
 
@@ -196,7 +224,7 @@ def _publish_import_message(
         "draw_date": draw_date,
         "fetched_at": now_local_iso(),
     }
-    future = publisher.publish(topic_path, to_pubsub_data(message))
+    future = publisher.publish(import_topic_path, to_pubsub_data(message))
     return future.result()
 
 
@@ -207,6 +235,7 @@ def entry_point(request):
     try:
         payload = _extract_request_json(request)
         lottery_type = payload.get("lottery_type")
+
         if lottery_type not in {"LOTO6", "LOTO7"}:
             return {"error": "lottery_type must be LOTO6 or LOTO7"}, 400
 
@@ -230,6 +259,7 @@ def entry_point(request):
         )
 
         _upload_csv(csv_text, object_name)
+
         message_id = _publish_import_message(
             execution_id=execution_id,
             lottery_type=lottery_type,
