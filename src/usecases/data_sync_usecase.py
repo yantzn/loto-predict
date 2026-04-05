@@ -34,12 +34,12 @@ def import_loto_csv_to_bq(bucket, name):
     gcs_uri = f'gs://{bucket}/{name}'
     if 'loto6' in name:
         schema = LOTO6_SCHEMA
-        staging = 'loto6_history_staging'
+        staging = 'loto6_validation_stage'
         main = 'loto6_history'
         key = ['draw_number']
     elif 'loto7' in name:
         schema = LOTO7_SCHEMA
-        staging = 'loto7_history_staging'
+        staging = 'loto7_validation_stage'
         main = 'loto7_history'
         key = ['draw_number']
     else:

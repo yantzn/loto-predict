@@ -34,15 +34,15 @@ resource "google_bigquery_table" "loto7_history" {
   clustering = ["draw_number"]
 }
 
-resource "google_bigquery_table" "loto6_history_staging" {
+resource "google_bigquery_table" "loto6_validation_stage" {
   dataset_id = google_bigquery_dataset.dataset.dataset_id
-  table_id   = local.table_ids.loto6_history_staging
+  table_id   = local.table_ids.loto6_validation_stage
   schema     = file("${path.module}/schemas/loto6_draw_results.json")
 }
 
-resource "google_bigquery_table" "loto7_history_staging" {
+resource "google_bigquery_table" "loto7_validation_stage" {
   dataset_id = google_bigquery_dataset.dataset.dataset_id
-  table_id   = local.table_ids.loto7_history_staging
+  table_id   = local.table_ids.loto7_validation_stage
   schema     = file("${path.module}/schemas/loto7_draw_results.json")
 }
 
