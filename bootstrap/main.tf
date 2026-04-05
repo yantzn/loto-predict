@@ -143,6 +143,7 @@ resource "google_project_iam_member" "github_actions_roles" {
     "roles/cloudscheduler.admin",
     "roles/logging.configWriter",
     "roles/resourcemanager.projectIamAdmin",
+    "roles/pubsub.admin",
   ])
 
   project = var.project_id
