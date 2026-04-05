@@ -39,16 +39,22 @@ variable "function_available_memory" {
   default     = "512M"
 }
 
+variable "function_min_instance_count" {
+  description = "Minimum instance count for Cloud Functions"
+  type        = number
+  default     = 0
+}
+
+variable "function_max_instance_count" {
+  description = "Maximum instance count for Cloud Functions"
+  type        = number
+  default     = 1
+}
+
 variable "log_level" {
   description = "Application log level"
   type        = string
   default     = "INFO"
-}
-
-variable "raw_bucket_name" {
-  description = "Bucket name for scraped or manual CSV files. When null, a default raw bucket name is used."
-  type        = string
-  default     = null
 }
 
 variable "source_bucket_name" {
@@ -77,7 +83,7 @@ variable "functions_runtime_service_account_email" {
 }
 
 variable "scheduler_invoker_service_account_email" {
-  description = "Service account email used by Cloud Scheduler OIDC invocations"
+  description = "Service account email used by Cloud Scheduler and Pub/Sub OIDC push invocations"
   type        = string
 }
 
@@ -101,4 +107,34 @@ variable "line_channel_access_token_secret_id" {
 variable "line_user_id_secret_id" {
   description = "Existing Secret Manager secret ID for LINE target user ID"
   type        = string
+}
+
+variable "scheduler_time_zone" {
+  description = "Time zone used by Cloud Scheduler"
+  type        = string
+  default     = "Asia/Tokyo"
+}
+
+variable "fetch_loto6_cron" {
+  description = "Cron expression for LOTO6 fetch job"
+  type        = string
+  default     = "5 19 * * 1,4"
+}
+
+variable "fetch_loto7_cron" {
+  description = "Cron expression for LOTO7 fetch job"
+  type        = string
+  default     = "5 19 * * 5"
+}
+
+variable "raw_bucket_name" {
+  description = "Raw bucket name. If null, Terraform generates one with prefix + random suffix."
+  type        = string
+  default     = null
+}
+
+variable "bucket_rotation_key" {
+  description = "Change this value only when you intentionally want to rotate generated bucket names."
+  type        = string
+  default     = "v1"
 }

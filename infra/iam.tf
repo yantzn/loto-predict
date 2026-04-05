@@ -20,9 +20,9 @@ resource "google_project_iam_member" "functions_runtime_bigquery_job_user" {
   member  = "serviceAccount:${var.functions_runtime_service_account_email}"
 }
 
-resource "google_project_iam_member" "functions_runtime_eventarc_receiver" {
+resource "google_project_iam_member" "functions_runtime_pubsub_publisher" {
   project = var.project_id
-  role    = "roles/eventarc.eventReceiver"
+  role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${var.functions_runtime_service_account_email}"
 }
 
@@ -52,6 +52,12 @@ resource "google_service_account_iam_member" "scheduler_service_agent_token_crea
   member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
+resource "google_service_account_iam_member" "pubsub_service_agent_token_creator" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.scheduler_invoker_service_account_email}"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
 resource "google_cloud_run_service_iam_member" "fetch_scheduler_invoker" {
   project  = var.project_id
   location = var.region
@@ -60,7 +66,15 @@ resource "google_cloud_run_service_iam_member" "fetch_scheduler_invoker" {
   member   = "serviceAccount:${var.scheduler_invoker_service_account_email}"
 }
 
-resource "google_cloud_run_service_iam_member" "notify_scheduler_invoker" {
+resource "google_cloud_run_service_iam_member" "import_pubsub_invoker" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloudfunctions2_function.import_loto_results_to_bq.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.scheduler_invoker_service_account_email}"
+}
+
+resource "google_cloud_run_service_iam_member" "notify_pubsub_invoker" {
   project  = var.project_id
   location = var.region
   service  = google_cloudfunctions2_function.generate_prediction_and_notify.name
