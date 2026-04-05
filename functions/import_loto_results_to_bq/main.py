@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import logging
-import os
 import csv
 import io
+import logging
+import os
 from typing import Any
 
 from google.cloud import bigquery, pubsub_v1, storage
@@ -17,9 +17,14 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.environ["GCP_PROJECT_ID"]
 DATASET_ID = os.environ["BIGQUERY_DATASET"]
-TABLE_LOTO6 = os.environ["BQ_TABLE_LOTO6_HISTORY"]
-TABLE_LOTO7 = os.environ["BQ_TABLE_LOTO7_HISTORY"]
-NOTIFY_TOPIC_NAME = os.environ["NOTIFY_TOPIC_NAME"]
+RAW_BUCKET_NAME = os.environ["GCS_BUCKET_RAW"]
+
+BQ_TABLE_LOTO6_HISTORY = os.environ["BQ_TABLE_LOTO6_HISTORY"]
+BQ_TABLE_LOTO7_HISTORY = os.environ["BQ_TABLE_LOTO7_HISTORY"]
+BQ_TABLE_LOTO6_VALIDATION = os.environ["BQ_TABLE_LOTO6_VALIDATION"]
+BQ_TABLE_LOTO7_VALIDATION = os.environ["BQ_TABLE_LOTO7_VALIDATION"]
+
+NOTIFY_TOPIC_NAME = os.environ["PUBSUB_NOTIFY_TOPIC"]
 
 storage_client = storage.Client(project=PROJECT_ID)
 bq_client = bigquery.Client(project=PROJECT_ID)
@@ -29,9 +34,9 @@ notify_topic_path = publisher.topic_path(PROJECT_ID, NOTIFY_TOPIC_NAME)
 
 def _table_name(lottery_type: str) -> str:
     if lottery_type == "LOTO6":
-        return TABLE_LOTO6
+        return BQ_TABLE_LOTO6_HISTORY
     if lottery_type == "LOTO7":
-        return TABLE_LOTO7
+        return BQ_TABLE_LOTO7_HISTORY
     raise ValueError(f"unsupported lottery_type: {lottery_type}")
 
 
@@ -50,35 +55,39 @@ def _normalize_rows(
 
     for row in rows:
         if lottery_type == "LOTO6":
-            normalized.append({
-                "draw_no": int(row["draw_no"]),
-                "draw_date": row["draw_date"],
-                "number1": int(row["number1"]),
-                "number2": int(row["number2"]),
-                "number3": int(row["number3"]),
-                "number4": int(row["number4"]),
-                "number5": int(row["number5"]),
-                "number6": int(row["number6"]),
-                "bonus_number": int(row["bonus_number"]) if row.get("bonus_number") else None,
-                "source_file_name": source_file_name,
-                "ingested_at": now_local_iso(),
-            })
+            normalized.append(
+                {
+                    "draw_no": int(row["draw_no"]),
+                    "draw_date": row["draw_date"],
+                    "number1": int(row["number1"]),
+                    "number2": int(row["number2"]),
+                    "number3": int(row["number3"]),
+                    "number4": int(row["number4"]),
+                    "number5": int(row["number5"]),
+                    "number6": int(row["number6"]),
+                    "bonus_number": int(row["bonus_number"]) if row.get("bonus_number") else None,
+                    "source_file_name": source_file_name,
+                    "ingested_at": now_local_iso(),
+                }
+            )
         else:
-            normalized.append({
-                "draw_no": int(row["draw_no"]),
-                "draw_date": row["draw_date"],
-                "number1": int(row["number1"]),
-                "number2": int(row["number2"]),
-                "number3": int(row["number3"]),
-                "number4": int(row["number4"]),
-                "number5": int(row["number5"]),
-                "number6": int(row["number6"]),
-                "number7": int(row["number7"]),
-                "bonus_number1": int(row["bonus_number1"]) if row.get("bonus_number1") else None,
-                "bonus_number2": int(row["bonus_number2"]) if row.get("bonus_number2") else None,
-                "source_file_name": source_file_name,
-                "ingested_at": now_local_iso(),
-            })
+            normalized.append(
+                {
+                    "draw_no": int(row["draw_no"]),
+                    "draw_date": row["draw_date"],
+                    "number1": int(row["number1"]),
+                    "number2": int(row["number2"]),
+                    "number3": int(row["number3"]),
+                    "number4": int(row["number4"]),
+                    "number5": int(row["number5"]),
+                    "number6": int(row["number6"]),
+                    "number7": int(row["number7"]),
+                    "bonus_number1": int(row["bonus_number1"]) if row.get("bonus_number1") else None,
+                    "bonus_number2": int(row["bonus_number2"]) if row.get("bonus_number2") else None,
+                    "source_file_name": source_file_name,
+                    "ingested_at": now_local_iso(),
+                }
+            )
 
     return normalized
 
@@ -178,6 +187,7 @@ def entry_point(request):
         )
 
         table_id = f"{PROJECT_ID}.{DATASET_ID}.{_table_name(lottery_type)}"
+
         raw_rows = _read_csv_rows(bucket_name, object_name)
         normalized_rows = _normalize_rows(lottery_type, raw_rows, object_name)
         draw_nos = _extract_draw_nos(normalized_rows)
@@ -214,6 +224,7 @@ def entry_point(request):
             return {"status": "ok", "reason": "duplicate_draw_no"}, 200
 
         _insert_rows(table_id, rows_to_insert)
+
         _publish_notify_message(
             execution_id=execution_id,
             lottery_type=lottery_type,

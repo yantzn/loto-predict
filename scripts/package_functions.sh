@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FUNCTIONS_DIR="${ROOT_DIR}/functions"
+SRC_DIR="${ROOT_DIR}/src"
 DIST_DIR="${ROOT_DIR}/dist"
 
 rm -rf "${DIST_DIR}"
@@ -11,7 +12,6 @@ mkdir -p "${DIST_DIR}"
 package_function() {
   local function_name="$1"
   local zip_name="$2"
-
   local function_dir="${FUNCTIONS_DIR}/${function_name}"
   local common_dir="${FUNCTIONS_DIR}/common"
   local build_dir
@@ -30,15 +30,17 @@ package_function() {
 
   echo "Packaging ${function_name} -> ${zip_name}"
 
-  # 関数本体を配置
   cp -R "${function_dir}/." "${build_dir}/"
 
-  # common モジュールを同梱
   if [[ -d "${common_dir}" ]]; then
     cp -R "${common_dir}" "${build_dir}/common"
   fi
 
-  # zip作成
+  if [[ -d "${SRC_DIR}" ]]; then
+    mkdir -p "${build_dir}/src"
+    cp -R "${SRC_DIR}/." "${build_dir}/src/"
+  fi
+
   (
     cd "${build_dir}"
     zip -qr "${DIST_DIR}/${zip_name}" .
