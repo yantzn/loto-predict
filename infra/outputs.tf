@@ -4,7 +4,7 @@ output "dataset_id" {
 }
 
 output "raw_bucket_name" {
-  description = "Raw CSV bucket name"
+  description = "Raw result bucket name"
   value       = google_storage_bucket.raw_bucket.name
 }
 
@@ -48,19 +48,24 @@ output "fetch_loto7_job_name" {
   value       = google_cloud_scheduler_job.fetch_loto7_job.name
 }
 
-output "notify_loto6_job_name" {
-  description = "Scheduler job name for loto6 notify"
-  value       = google_cloud_scheduler_job.notify_loto6_job.name
+output "import_requests_topic_name" {
+  description = "Pub/Sub topic name for import requests"
+  value       = google_pubsub_topic.import_requests.name
 }
 
-output "notify_loto7_job_name" {
-  description = "Scheduler job name for loto7 notify"
-  value       = google_cloud_scheduler_job.notify_loto7_job.name
+output "notify_requests_topic_name" {
+  description = "Pub/Sub topic name for notify requests"
+  value       = google_pubsub_topic.notify_requests.name
 }
 
-output "eventarc_trigger_name" {
-  description = "Eventarc trigger name for raw CSV import"
-  value       = google_eventarc_trigger.import_loto_results_gcs.name
+output "import_requests_subscription_name" {
+  description = "Pub/Sub push subscription name for import requests"
+  value       = google_pubsub_subscription.import_requests_push.name
+}
+
+output "notify_requests_subscription_name" {
+  description = "Pub/Sub push subscription name for notify requests"
+  value       = google_pubsub_subscription.notify_requests_push.name
 }
 
 output "table_ids" {

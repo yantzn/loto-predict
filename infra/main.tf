@@ -1,14 +1,9 @@
 locals {
   common_labels = {
-    system     = "loto-predict-line"
+    system     = "loto-predict"
     managed_by = "terraform"
     module     = "infra"
   }
-
-  resolved_raw_bucket_name = coalesce(
-    var.raw_bucket_name,
-    "${var.project_id}-loto-raw"
-  )
 
   table_ids = {
     loto6_history          = "loto6_history"
