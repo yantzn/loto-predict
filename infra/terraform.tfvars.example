@@ -26,7 +26,7 @@ scheduler_invoker_service_account_email = "loto-scheduler-invoker@your-gcp-proje
 history_limit_loto6 = 100
 history_limit_loto7 = 100
 
-line_channel_access_token_secret_id = "line-channel-access-token"
+line_channel_access_token_secret_id = "line_channel_access_token"
 line_user_id_secret_id              = "line_user_id"
 
 scheduler_time_zone = "Asia/Tokyo"
