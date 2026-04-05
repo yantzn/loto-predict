@@ -59,7 +59,7 @@ class ImportResultsCsvUseCase:
                 bigquery.SchemaField("bonus1", "INTEGER"),
                 bigquery.SchemaField("source", "STRING"),
             ]
-            staging_table = self.settings.bq_staging_table_loto6
+            staging_table = self.settings.BQ_VALIDATION_TABLE_LOTO6
             history_table = self.settings.bq_table_loto6_history
         else:
             schema = [
@@ -76,7 +76,7 @@ class ImportResultsCsvUseCase:
                 bigquery.SchemaField("bonus2", "INTEGER"),
                 bigquery.SchemaField("source", "STRING"),
             ]
-            staging_table = self.settings.bq_staging_table_loto7
+            staging_table = self.settings.BQ_VALIDATION_TABLE_LOTO7
             history_table = self.settings.bq_table_loto7_history
 
         csv_body = self._normalized_rows_to_csv(lottery_type, normalized_rows)

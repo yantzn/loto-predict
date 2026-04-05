@@ -66,8 +66,8 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
       BQ_DATASET              = var.dataset_id
       BQ_TABLE_LOTO6_HISTORY  = google_bigquery_table.loto6_history.table_id
       BQ_TABLE_LOTO7_HISTORY  = google_bigquery_table.loto7_history.table_id
-      BQ_STAGING_TABLE_LOTO6  = google_bigquery_table.loto6_history_staging.table_id
-      BQ_STAGING_TABLE_LOTO7  = google_bigquery_table.loto7_history_staging.table_id
+      BQ_VALIDATION_TABLE_LOTO6  = google_bigquery_table.loto6_validation_stage.table_id
+      BQ_VALIDATION_TABLE_LOTO7  = google_bigquery_table.loto7_validation_stage.table_id
       BQ_TABLE_PREDICTION_RUNS = google_bigquery_table.prediction_runs.table_id
       LOG_LEVEL               = var.log_level
     }
@@ -78,8 +78,8 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     google_bigquery_dataset.dataset,
     google_bigquery_table.loto6_history,
     google_bigquery_table.loto7_history,
-    google_bigquery_table.loto6_history_staging,
-    google_bigquery_table.loto7_history_staging,
+    google_bigquery_table.loto6_validation_stage,
+    google_bigquery_table.loto7_validation_stage,
     google_bigquery_table.prediction_runs,
   ]
 }
