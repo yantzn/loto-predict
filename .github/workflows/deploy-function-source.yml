@@ -5,10 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'functions/**'
-      - 'src/**'
-      - 'scripts/package_functions.sh'
-      - '.github/workflows/deploy-function-source.yml'
+      - "functions/**"
+      - "scripts/package_functions.sh"
+      - ".github/workflows/deploy-function-source.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,40 +22,99 @@ env:
 jobs:
   package-and-upload:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate required variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}"
+          test -n "${GCP_REGION}"
+          test -n "${SOURCE_BUCKET_NAME}"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: latest
+
+      - name: Verify gcloud project
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud config set project "${GCP_PROJECT_ID}"
+          gcloud config get-value project
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ensure zip command exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v zip >/dev/null 2>&1
 
       - name: Package functions
-        run: bash ./scripts/package_functions.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/package_functions.sh
+          bash ./scripts/package_functions.sh
+
+      - name: Verify packaged archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f dist/fetch_loto_results.zip
+          test -f dist/import_loto_results_to_bq.zip
+          test -f dist/generate_prediction_and_notify.zip
+
+          unzip -l dist/fetch_loto_results.zip | grep "common/"
+          unzip -l dist/import_loto_results_to_bq.zip | grep "common/"
+          unzip -l dist/generate_prediction_and_notify.zip | grep "common/"
 
       - name: Upload fetch_loto_results source
+        shell: bash
         run: |
+          set -euo pipefail
           gcloud storage cp \
             dist/fetch_loto_results.zip \
             gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip
 
       - name: Upload import_loto_results_to_bq source
+        shell: bash
         run: |
+          set -euo pipefail
           gcloud storage cp \
             dist/import_loto_results_to_bq.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results_to_bq/function-source.zip
+            gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results/function-source.zip
 
       - name: Upload generate_prediction_and_notify source
+        shell: bash
         run: |
+          set -euo pipefail
           gcloud storage cp \
             dist/generate_prediction_and_notify.zip \
             gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip
+
+      - name: Show uploaded object paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Uploaded:"
+          echo "gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip"
+          echo "gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results/function-source.zip"
+          echo "gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip"

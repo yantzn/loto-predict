@@ -128,7 +128,7 @@ variable "fetch_loto7_cron" {
 }
 
 variable "raw_bucket_name" {
-  description = "Raw bucket name. If null, Terraform generates one with prefix + random suffix."
+  description = "Raw bucket name. If null, Terraform generates one with suffix."
   type        = string
   default     = null
 }
