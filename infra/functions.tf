@@ -62,14 +62,14 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
-      GCP_PROJECT_ID          = var.project_id
-      BQ_DATASET              = var.dataset_id
-      BQ_TABLE_LOTO6_HISTORY  = google_bigquery_table.loto6_history.table_id
-      BQ_TABLE_LOTO7_HISTORY  = google_bigquery_table.loto7_history.table_id
-      BQ_VALIDATION_TABLE_LOTO6  = google_bigquery_table.loto6_validation_stage.table_id
-      BQ_VALIDATION_TABLE_LOTO7  = google_bigquery_table.loto7_validation_stage.table_id
-      BQ_TABLE_PREDICTION_RUNS = google_bigquery_table.prediction_runs.table_id
-      LOG_LEVEL               = var.log_level
+      GCP_PROJECT_ID            = var.project_id
+      BQ_DATASET                = var.dataset_id
+      BQ_TABLE_LOTO6_HISTORY    = google_bigquery_table.loto6_history.table_id
+      BQ_TABLE_LOTO7_HISTORY    = google_bigquery_table.loto7_history.table_id
+      BQ_VALIDATION_TABLE_LOTO6 = google_bigquery_table.loto6_validation_stage.table_id
+      BQ_VALIDATION_TABLE_LOTO7 = google_bigquery_table.loto7_validation_stage.table_id
+      BQ_TABLE_PREDICTION_RUNS  = google_bigquery_table.prediction_runs.table_id
+      LOG_LEVEL                 = var.log_level
     }
   }
 
@@ -110,14 +110,14 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
-      GCP_PROJECT_ID        = var.project_id
-      BQ_DATASET            = var.dataset_id
-      BQ_TABLE_LOTO6_HISTORY = google_bigquery_table.loto6_history.table_id
-      BQ_TABLE_LOTO7_HISTORY = google_bigquery_table.loto7_history.table_id
+      GCP_PROJECT_ID           = var.project_id
+      BQ_DATASET               = var.dataset_id
+      BQ_TABLE_LOTO6_HISTORY   = google_bigquery_table.loto6_history.table_id
+      BQ_TABLE_LOTO7_HISTORY   = google_bigquery_table.loto7_history.table_id
       BQ_TABLE_PREDICTION_RUNS = google_bigquery_table.prediction_runs.table_id
-      HISTORY_LIMIT_LOTO6   = tostring(var.history_limit_loto6)
-      HISTORY_LIMIT_LOTO7   = tostring(var.history_limit_loto7)
-      LOG_LEVEL             = var.log_level
+      HISTORY_LIMIT_LOTO6      = tostring(var.history_limit_loto6)
+      HISTORY_LIMIT_LOTO7      = tostring(var.history_limit_loto7)
+      LOG_LEVEL                = var.log_level
     }
 
     secret_environment_variables {

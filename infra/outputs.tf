@@ -66,11 +66,11 @@ output "eventarc_trigger_name" {
 output "table_ids" {
   description = "BigQuery table IDs used by this system"
   value = {
-    loto6_history         = google_bigquery_table.loto6_history.table_id
-    loto7_history         = google_bigquery_table.loto7_history.table_id
+    loto6_history          = google_bigquery_table.loto6_history.table_id
+    loto7_history          = google_bigquery_table.loto7_history.table_id
     loto6_validation_stage = google_bigquery_table.loto6_validation_stage.table_id
     loto7_validation_stage = google_bigquery_table.loto7_validation_stage.table_id
-    prediction_runs       = google_bigquery_table.prediction_runs.table_id
-    execution_logs        = google_bigquery_table.execution_logs.table_id
+    prediction_runs        = google_bigquery_table.prediction_runs.table_id
+    execution_logs         = google_bigquery_table.execution_logs.table_id
   }
 }
