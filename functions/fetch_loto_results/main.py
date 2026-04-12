@@ -4,41 +4,53 @@ import json
 import logging
 import os
 import sys
-import uuid
 from pathlib import Path
+from typing import Any
 
-from google.cloud import pubsub_v1, storage
+from google.cloud import pubsub_v1
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-
-# Cloud Functions entrypoint: usecase呼び出しのみ
-import logging
-import os
+from src.config.settings import settings
+from src.infrastructure.gcs.storage_factory import create_storage_client
+from src.infrastructure.rakuten_loto import RakutenLotoClient
 from src.usecases.fetch_latest_results import FetchLatestResultsUseCase
 
-def fetch_loto_results(request):
-    lottery_type = request.args.get("lottery_type") or (request.get_json(silent=True) or {}).get("lottery_type")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger(__name__)
+
+IMPORT_TOPIC_NAME = os.getenv("PUBSUB_IMPORT_TOPIC", "import-loto-results")
+RAW_BUCKET_NAME = os.getenv("GCS_BUCKET_RAW", "")
+
+
+def _json_response(payload: dict[str, Any], status_code: int = 200):
+    return (
+        json.dumps(payload, ensure_ascii=False),
+        status_code,
+        {"Content-Type": "application/json; charset=utf-8"},
+    )
+
+
+def _extract_lottery_type(request) -> str:
+    body = request.get_json(silent=True) or {}
+    lottery_type = body.get("lottery_type") or request.args.get("lottery_type")
     if not lottery_type:
-        return {"error": "lottery_type is required"}, 400
-    lottery_type = str(lottery_type).upper()
-    if lottery_type not in {"LOTO6", "LOTO7"}:
-        return {"error": "lottery_type must be LOTO6 or LOTO7"}, 400
+        raise ValueError("lottery_type is required")
 
-    # 必要な依存を初期化（例: scraper, gcs_client, logger）
-    from src.infrastructure.rakuten_loto import RakutenLotoClient
-    from src.infrastructure.gcs.gcs_client import GCSClient
-    scraper = RakutenLotoClient()
-    gcs_client = GCSClient(project_id=os.environ["GCP_PROJECT_ID"])
-    logger = logging.getLogger(__name__)
-    bucket_name = os.getenv("GCS_BUCKET_RAW") or os.getenv("RAW_BUCKET_NAME")
-    usecase = FetchLatestResultsUseCase(scraper, gcs_client, bucket_name, logger)
+    normalized = str(lottery_type).strip().upper()
+    if normalized not in {"LOTO6", "LOTO7"}:
+        raise ValueError("lottery_type must be LOTO6 or LOTO7")
 
-    result = usecase.execute(lottery_type)
-    return result, 200
+    return normalized
+
+
+def _extract_execution_id(request) -> str:
+    body = request.get_json(silent=True) or {}
+    execution_id = body.get("execution_id") or request.args.get("execution_id")
+    return str(execution_id).strip() if execution_id else ""
 
 
 def _publish_import_message(
@@ -49,6 +61,18 @@ def _publish_import_message(
     draw_no: int,
     draw_date: str,
 ) -> str:
+    if settings.app_env == "local":
+        logger.info(
+            "Skip Pub/Sub publish in local mode. execution_id=%s lottery_type=%s gcs_object=%s",
+            execution_id,
+            lottery_type,
+            gcs_object,
+        )
+        return "local-skip"
+
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(settings.gcp_project_id, IMPORT_TOPIC_NAME)
+
     message = {
         "event_type": "FETCH_COMPLETED",
         "execution_id": execution_id,
@@ -57,9 +81,12 @@ def _publish_import_message(
         "gcs_object": gcs_object,
         "draw_no": draw_no,
         "draw_date": draw_date,
-        "fetched_at": now_local_iso(),
     }
-    future = publisher.publish(import_topic_path, to_pubsub_data(message))
+
+    future = publisher.publish(
+        topic_path,
+        json.dumps(message, ensure_ascii=False).encode("utf-8"),
+    )
     return future.result()
 
 
@@ -71,77 +98,52 @@ def entry_point(request):
         lottery_type = _extract_lottery_type(request)
         execution_id = _extract_execution_id(request)
 
-        log_and_write(
-            execution_id=execution_id,
-            function_name="fetch_loto_results",
-            lottery_type=lottery_type,
-            stage="fetch",
-            status="STARTED",
-            message="fetch started",
+        scraper = RakutenLotoClient()
+        storage_client = create_storage_client()
+
+        usecase = FetchLatestResultsUseCase(
+            scraper=scraper,
+            gcs_client=storage_client,
+            bucket_name=RAW_BUCKET_NAME,
+            logger=logger,
         )
 
-        client = RakutenLotoClient()
-        result = client.fetch_latest_result(lottery_type)
-        csv_text = serialize_results_to_csv(lottery_type, [result])
+        result = usecase.execute(lottery_type.lower())
 
-        object_name = (
-            f"{lottery_type.lower()}/draw_date={result.draw_date}/"
-            f"draw_no={result.draw_no}/{execution_id}.csv"
-        )
-        _upload_csv(csv_text, object_name)
-
-        message_id = _publish_import_message(
+        publish_message_id = _publish_import_message(
             execution_id=execution_id,
             lottery_type=lottery_type,
-            gcs_object=object_name,
-            draw_no=result.draw_no,
-            draw_date=result.draw_date,
+            gcs_object=result["gcs_object"],
+            draw_no=int(result["draw_no"]),
+            draw_date=str(result["draw_date"]),
         )
 
-        log_and_write(
-            execution_id=execution_id,
-            function_name="fetch_loto_results",
-            lottery_type=lottery_type,
-            stage="fetch",
-            status="SUCCESS",
-            message=f"fetch completed message_id={message_id}",
-            gcs_bucket=RAW_BUCKET_NAME,
-            gcs_object=object_name,
-            draw_no=result.draw_no,
-        )
-
-        return (
-            json.dumps(
-                {
-                    "status": "ok",
-                    "execution_id": execution_id,
-                    "lottery_type": lottery_type,
-                    "gcs_bucket": RAW_BUCKET_NAME,
-                    "gcs_object": object_name,
-                    "draw_no": result.draw_no,
-                    "draw_date": result.draw_date,
-                    "source_url": result.source_url,
-                },
-                ensure_ascii=False,
-            ),
-            200,
-            {"Content-Type": "application/json; charset=utf-8"},
+        return _json_response(
+            {
+                "status": "ok",
+                "execution_id": execution_id,
+                "lottery_type": lottery_type,
+                "gcs_uri": result["gcs_uri"],
+                "gcs_bucket": RAW_BUCKET_NAME if settings.app_env != "local" else "",
+                "gcs_object": result["gcs_object"],
+                "draw_no": result["draw_no"],
+                "draw_date": result["draw_date"],
+                "published_message_id": publish_message_id,
+            }
         )
 
     except Exception as exc:
-        log_and_write(
-            execution_id=execution_id or "UNKNOWN",
-            function_name="fetch_loto_results",
-            lottery_type=lottery_type or None,
-            stage="fetch",
-            status="FAILED",
-            message="fetch failed",
-            error_type=type(exc).__name__,
-            error_detail=str(exc),
+        logger.exception(
+            "fetch_loto_results failed. execution_id=%s lottery_type=%s",
+            execution_id,
+            lottery_type,
         )
-        logger.exception("fetch_loto_results failed")
-        return (
-            json.dumps({"error": str(exc)}, ensure_ascii=False),
+        return _json_response(
+            {
+                "status": "error",
+                "execution_id": execution_id,
+                "lottery_type": lottery_type,
+                "message": str(exc),
+            },
             500,
-            {"Content-Type": "application/json; charset=utf-8"},
         )

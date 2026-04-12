@@ -7,3 +7,7 @@ __pycache__/
 .pytest_cache/
 # VS Code workspace
 *.code-workspace
+
+# ローカルストレージの生データ・インポートデータをGit管理対象外に
+local_storage/raw/
+local_storage/imported/

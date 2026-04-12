@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from google.cloud import bigquery
 
-from loto_predict.domain.models import LotoResult
+from src.domain.models import LotoResult
 
 
 class LotoRepository:

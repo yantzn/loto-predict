@@ -5,9 +5,9 @@ from datetime import datetime
 
 import requests
 
-from loto_predict.domain.models import LotoResult
-from loto_predict.utils.exceptions import ScrapingError
-from loto_predict.utils.validators import validate_numbers
+from src.domain.models import LotoResult
+from src.utils.exceptions import ScrapingError
+from src.utils.validators import validate_numbers
 
 
 class LotoScraper:
