@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FUNCTIONS_DIR="${ROOT_DIR}/functions"
 SRC_DIR="${ROOT_DIR}/src"
 DIST_DIR="${ROOT_DIR}/dist"
+BASE_REQUIREMENTS="${ROOT_DIR}/requirements-base.txt"
 
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
@@ -26,6 +27,11 @@ package_function() {
     exit 1
   fi
 
+  if [[ ! -f "${BASE_REQUIREMENTS}" ]]; then
+    echo "Base requirements not found: ${BASE_REQUIREMENTS}" >&2
+    exit 1
+  fi
+
   build_dir="$(mktemp -d)"
 
   echo "Packaging ${function_name} -> ${zip_name}"
@@ -40,6 +46,12 @@ package_function() {
     mkdir -p "${build_dir}/src"
     cp -R "${SRC_DIR}/." "${build_dir}/src/"
   fi
+
+  # 依存定義の正本はルートの requirements-base.txt
+  cp "${BASE_REQUIREMENTS}" "${build_dir}/requirements.txt"
+
+  # 万が一、ネストした requirements.txt が紛れ込んでいても削除
+  find "${build_dir}" -mindepth 2 -type f -name "requirements.txt" -delete || true
 
   (
     cd "${build_dir}"

@@ -1,4 +1,4 @@
-name: Deploy Function Source
+name: Deploy GCP Cloud Functions Source
 
 on:
   push:
@@ -6,21 +6,53 @@ on:
       - main
     paths:
       - "functions/**"
-      - "scripts/package_functions.sh"
+      - "src/**"
+      - "requirements-base.txt"
+      - "requirements-local.txt"
+      - ".github/scripts/package_functions.sh"
+      - ".github/scripts/terraform_infra_wait.py"
       - ".github/workflows/deploy-function-source.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
+  actions: read
+
+concurrency:
+  group: app-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   SOURCE_BUCKET_NAME: ${{ vars.FUNCTION_SOURCE_BUCKET }}
 
+  FETCH_OBJECT: functions/fetch_loto_results/function-source.zip
+  IMPORT_OBJECT: functions/import_loto_results_to_bq/function-source.zip
+  NOTIFY_OBJECT: functions/generate_prediction_and_notify/function-source.zip
+
 jobs:
-  package-and-upload:
+  wait-for-terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wait until Terraform Infra is idle on this branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking Terraform Infra runs on branch=${BRANCH}"
+          python .github/scripts/terraform_infra_wait.py
+
+  package-and-deploy:
+    needs: wait-for-terraform
     runs-on: ubuntu-latest
 
     steps:
@@ -45,76 +77,80 @@ jobs:
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          version: latest
-
-      - name: Verify gcloud project
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud config set project "${GCP_PROJECT_ID}"
-          gcloud config get-value project
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Ensure zip command exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          command -v zip >/dev/null 2>&1
-
       - name: Package functions
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./scripts/package_functions.sh
-          bash ./scripts/package_functions.sh
+          chmod +x ./.github/scripts/package_functions.sh
+          bash ./.github/scripts/package_functions.sh
 
       - name: Verify packaged archives
         shell: bash
         run: |
           set -euo pipefail
-
           test -f dist/fetch_loto_results.zip
           test -f dist/import_loto_results_to_bq.zip
           test -f dist/generate_prediction_and_notify.zip
 
-          unzip -l dist/fetch_loto_results.zip | grep "common/"
-          unzip -l dist/import_loto_results_to_bq.zip | grep "common/"
-          unzip -l dist/generate_prediction_and_notify.zip | grep "common/"
-
-      - name: Upload fetch_loto_results source
+      - name: Upload packaged archives to source bucket
         shell: bash
         run: |
           set -euo pipefail
-          gcloud storage cp \
-            dist/fetch_loto_results.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip
+          gcloud storage cp dist/fetch_loto_results.zip gs://${SOURCE_BUCKET_NAME}/${FETCH_OBJECT}
+          gcloud storage cp dist/import_loto_results_to_bq.zip gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
+          gcloud storage cp dist/generate_prediction_and_notify.zip gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}
 
-      - name: Upload import_loto_results_to_bq source
+      - name: Prepare deploy sources
         shell: bash
         run: |
           set -euo pipefail
-          gcloud storage cp \
-            dist/import_loto_results_to_bq.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results/function-source.zip
+          rm -rf .deploy
+          mkdir -p .deploy/fetch .deploy/import .deploy/notify
+          unzip -q dist/fetch_loto_results.zip -d .deploy/fetch
+          unzip -q dist/import_loto_results_to_bq.zip -d .deploy/import
+          unzip -q dist/generate_prediction_and_notify.zip -d .deploy/notify
 
-      - name: Upload generate_prediction_and_notify source
+      - name: Redeploy fetch-loto-results
         shell: bash
         run: |
           set -euo pipefail
-          gcloud storage cp \
-            dist/generate_prediction_and_notify.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip
+          gcloud functions deploy fetch-loto-results \
+            --gen2 \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --runtime=python312 \
+            --entry-point=entry_point \
+            --source=.deploy/fetch \
+            --trigger-http
 
-      - name: Show uploaded object paths
+      - name: Redeploy import-loto-results-to-bq
         shell: bash
         run: |
           set -euo pipefail
-          echo "Uploaded:"
-          echo "gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip"
-          echo "gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results/function-source.zip"
-          echo "gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip"
+          gcloud functions deploy import-loto-results-to-bq \
+            --gen2 \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --runtime=python312 \
+            --entry-point=entry_point \
+            --source=.deploy/import \
+            --trigger-http
+
+      - name: Redeploy generate-prediction-and-notify
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud functions deploy generate-prediction-and-notify \
+            --gen2 \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --runtime=python312 \
+            --entry-point=entry_point \
+            --source=.deploy/notify \
+            --trigger-http
