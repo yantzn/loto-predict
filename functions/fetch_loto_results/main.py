@@ -14,7 +14,7 @@ PROJECT_ROOT = CURRENT_DIR.parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.config.settings import settings
+from src.config.settings import get_settings
 from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.rakuten_loto import RakutenLotoClient
 from src.usecases.fetch_latest_results import FetchLatestResultsUseCase
@@ -61,7 +61,8 @@ def _publish_import_message(
     draw_no: int,
     draw_date: str,
 ) -> str:
-    if settings.app_env == "local":
+    settings = get_settings()
+    if settings.env == "local":
         logger.info(
             "Skip Pub/Sub publish in local mode. execution_id=%s lottery_type=%s gcs_object=%s",
             execution_id,
@@ -71,7 +72,7 @@ def _publish_import_message(
         return "local-skip"
 
     publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(settings.gcp_project_id, IMPORT_TOPIC_NAME)
+    topic_path = publisher.topic_path(settings.gcp.project_id, IMPORT_TOPIC_NAME)
 
     message = {
         "event_type": "FETCH_COMPLETED",
@@ -90,17 +91,29 @@ def _publish_import_message(
     return future.result()
 
 
-def entry_point(request):
+def entry_point(request) -> tuple[str, int, dict[str, str]]:
+    """
+    Cloud Functionsエントリーポイント。
+    楽天ロトから最新結果を取得し、GCS保存・Pub/Sub通知を行う。
+    Pub/SubまたはHTTPトリガーで呼ばれる。
+
+    Args:
+        request: Flaskリクエストオブジェクト（GCP Functions標準）
+    Returns:
+        (body, status_code, headers) のタプル
+    """
     execution_id = ""
     lottery_type = ""
-
     try:
+        # lottery_type, execution_idはHTTP/JSON両対応で抽出
         lottery_type = _extract_lottery_type(request)
         execution_id = _extract_execution_id(request)
 
+        # 楽天ロトクライアント・GCSクライアント生成
         scraper = RakutenLotoClient()
         storage_client = create_storage_client()
 
+        # ユースケース呼び出し（ビジネスロジックはusecase層に集約）
         usecase = FetchLatestResultsUseCase(
             scraper=scraper,
             gcs_client=storage_client,
@@ -110,6 +123,7 @@ def entry_point(request):
 
         result = usecase.execute(lottery_type.lower())
 
+        # 取得結果をPub/Subで通知（ローカル時はスキップ）
         publish_message_id = _publish_import_message(
             execution_id=execution_id,
             lottery_type=lottery_type,
@@ -124,7 +138,7 @@ def entry_point(request):
                 "execution_id": execution_id,
                 "lottery_type": lottery_type,
                 "gcs_uri": result["gcs_uri"],
-                "gcs_bucket": RAW_BUCKET_NAME if settings.app_env != "local" else "",
+                "gcs_bucket": RAW_BUCKET_NAME if get_settings().env != "local" else "",
                 "gcs_object": result["gcs_object"],
                 "draw_no": result["draw_no"],
                 "draw_date": result["draw_date"],
@@ -133,6 +147,7 @@ def entry_point(request):
         )
 
     except Exception as exc:
+        # 例外発生時は詳細ログを残し、エラー内容を返す
         logger.exception(
             "fetch_loto_results failed. execution_id=%s lottery_type=%s",
             execution_id,

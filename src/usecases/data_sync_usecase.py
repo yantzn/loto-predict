@@ -1,5 +1,5 @@
 from src.infrastructure.bigquery_client import bq_client
-from src.config.settings import settings
+from src.config.settings import get_settings
 from src.utils.logger import get_logger
 
 logger = get_logger()
@@ -29,9 +29,18 @@ LOTO7_SCHEMA = [
     {'name': 'bonus2', 'type': 'INTEGER'},
 ]
 
-def import_loto_csv_to_bq(bucket, name):
-    # GCS URI
+def import_loto_csv_to_bq(bucket: str, name: str) -> None:
+    """
+    GCS上のロトCSVファイルをBigQueryへインポートするユースケース。
+    - ステージングテーブルでバリデーション後、メインテーブルへマージ
+
+    Args:
+        bucket (str): GCSバケット名
+        name (str): GCSオブジェクト名（ファイルパス）
+    """
+    # GCS URIを組み立て
     gcs_uri = f'gs://{bucket}/{name}'
+    # ファイル名からロト種別を判定し、スキーマ・テーブル名を決定
     if 'loto6' in name:
         schema = LOTO6_SCHEMA
         staging = 'loto6_validation_stage'
@@ -45,7 +54,9 @@ def import_loto_csv_to_bq(bucket, name):
     else:
         logger.error('Unknown file type')
         return
-    # バリデーション（省略: 必要に応じて追加）
+    # TODO: 必要に応じてCSV内容のバリデーションを追加
+    # ステージングテーブルへロード
     bq_client.load_csv_to_staging(staging, gcs_uri, schema)
+    # メインテーブルへマージ
     bq_client.merge_staging_to_main(staging, main, key)
     logger.info(f'Imported {gcs_uri} to {main}')

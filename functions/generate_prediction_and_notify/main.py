@@ -13,7 +13,7 @@ PROJECT_ROOT = CURRENT_DIR.parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.config.settings import settings
+from src.config.settings import get_settings
 from src.infrastructure.bigquery.bigquery_client import BigQueryClient
 from src.infrastructure.line.line_client import LineClient
 from src.infrastructure.repositories.repository_factory import create_loto_repository
@@ -55,34 +55,51 @@ def _history_limit_for(lottery_type: str) -> int:
     return int(os.getenv(key, "100"))
 
 
-def entry_point(request):
+def entry_point(request) -> tuple[str, int, dict[str, str]]:
+    """
+    Cloud Functionsエントリーポイント。
+    予想番号を生成し、LINE通知・BigQuery記録を行う。
+    Pub/SubまたはHTTPトリガーで呼ばれる。
+
+    Args:
+        request: Flaskリクエストオブジェクト（GCP Functions標準）
+    Returns:
+        (body, status_code, headers) のタプル
+    """
     execution_id = ""
     lottery_type = ""
-
     try:
+        # Pub/Sub経由・HTTP経由どちらも吸収する
         message = _extract_event_message(request)
         _require_fields(message, ["execution_id", "lottery_type"])
 
         execution_id = str(message["execution_id"]).strip()
         lottery_type = str(message["lottery_type"]).strip().upper()
 
+        # ロト種別バリデーション（将来拡張時もここで制御）
         if lottery_type not in {"LOTO6", "LOTO7"}:
             raise ValueError("lottery_type must be LOTO6 or LOTO7")
 
-        if not settings.line_channel_access_token:
+        # 機密情報はSecret Manager経由で注入されている前提
+        settings = get_settings()
+        if not settings.line.channel_access_token:
             raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is not set")
-        if not settings.line_to_user_id:
-            raise ValueError("LINE_TO_USER_ID is not set")
+        if not settings.line.user_id:
+            raise ValueError("LINE_USER_ID is not set")
 
-        history_limit = _history_limit_for(lottery_type)
+        # 直近N件の履歴を使う（環境変数で制御可能）
+        history_limit = settings.lottery.stats_target_draws
 
-        bq_client = None if settings.app_env == "local" else BigQueryClient(project_id=settings.gcp_project_id)
+        # GCP実行時のみBigQueryクライアントを生成
+        bq_client = None if settings.env == "local" else BigQueryClient(project_id=settings.gcp.project_id)
         repository = create_loto_repository(bq_client=bq_client)
 
+        # LINE通知クライアント生成
         line_client = LineClient(
-            channel_access_token=settings.line_channel_access_token,
+            channel_access_token=settings.line.channel_access_token,
         )
 
+        # ユースケース呼び出し（ビジネスロジックはusecase層に集約）
         usecase = GenerateAndNotifyUseCase(
             repository=repository,
             line_client=line_client,
@@ -92,7 +109,7 @@ def entry_point(request):
         result = usecase.execute(
             lottery_type=lottery_type.lower(),
             history_limit=history_limit,
-            line_to_user_id=settings.line_to_user_id,
+            line_to_user_id=settings.line.user_id,
         )
 
         return _json_response(
@@ -106,6 +123,7 @@ def entry_point(request):
         )
 
     except Exception as exc:
+        # 例外発生時は詳細ログを残し、エラー内容を返す
         logger.exception(
             "generate_prediction_and_notify failed. execution_id=%s lottery_type=%s",
             execution_id,

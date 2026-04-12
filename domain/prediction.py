@@ -1,3 +1,9 @@
+# =====================================
+# ロト予想番号生成ロジック
+# - スコア分布に基づく重み付きランダムサンプリング
+# - 一意な組み合わせを複数生成
+# =====================================
+
 from __future__ import annotations
 
 import random
@@ -9,6 +15,30 @@ from domain.statistics import LotteryRule
 from utils.exceptions import PredictionGenerationError
 
 
+
+
+
+
+
+
+#
+# 生成された番号組み合わせの妥当性検証
+# - 桁数・重複・範囲外チェック
+#
+# - 必要な番号が揃っているか、型・値が正しいか
+#
+# - マイナス値は0扱い＋下限補正＋べき乗強調
+#
+# - 合計値でルーレット方式
+# - 浮動小数誤差対策あり
+#
+# - スコア分布に基づき、1口分の番号を重み付きでランダム抽出
+# - 既に選ばれた番号は除外
+#
+# - スコア分布・ルール・設定に基づき、重み付きランダムサンプリングで一意な組み合わせを生成
+# - 再試行上限や重複排除も考慮
+#
+#
 class InvalidScoreError(PredictionGenerationError):
     def __init__(self, message: str, details: dict | None = None) -> None:
         super().__init__(
@@ -19,6 +49,10 @@ class InvalidScoreError(PredictionGenerationError):
 
 
 @dataclass(frozen=True)
+#
+# 予想生成パラメータ設定
+# - 何口生成するか、重み付けの強さ、再試行上限など
+#
 class PredictionConfig:
     """
     ticket_count:
@@ -42,6 +76,7 @@ class PredictionConfig:
     sort_numbers: bool = True
 
     def validate(self) -> None:
+        # パラメータの妥当性検証
         if self.ticket_count <= 0:
             raise ValueError("ticket_count must be > 0")
         if self.score_floor <= 0:
@@ -55,11 +90,15 @@ class PredictionConfig:
 
 
 @dataclass(frozen=True)
+#
+# 予想生成結果（ロト種別＋生成チケット群）
+#
 class PredictionResult:
     lottery_type: LotteryType
     tickets: tuple[PredictionTicket, ...]
 
     def as_number_lists(self) -> list[list[int]]:
+        # 予想チケットをリスト形式で返す
         return [ticket.as_list() for ticket in self.tickets]
 
 
@@ -132,6 +171,9 @@ def generate_predictions(
     )
 
 
+#
+# 予想結果をAPIレスポンス等で使いやすい形式（辞書リスト）に変換
+#
 def format_prediction_result(result: PredictionResult) -> list[dict[str, object]]:
     return [
         {

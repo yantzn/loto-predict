@@ -5,6 +5,15 @@ import json
 from typing import Any
 
 def decode_pubsub_push_request(request) -> dict[str, Any]:
+    """
+    GCP Pub/SubのPushリクエストからメッセージデータをデコードして辞書化する。
+    Args:
+        request: Flask等のリクエストオブジェクト
+    Returns:
+        dict: デコード済みメッセージ
+    Raises:
+        ValueError: フォーマット不正やデータ欠損時
+    """
     envelope = request.get_json(silent=True)
     if not envelope or "message" not in envelope:
         raise ValueError("Pub/Sub push envelope is invalid")
@@ -17,9 +26,24 @@ def decode_pubsub_push_request(request) -> dict[str, Any]:
     return json.loads(decoded)
 
 def require_fields(payload: dict[str, Any], required_fields: list[str]) -> None:
+    """
+    指定フィールドがpayloadに全て存在するか検証。
+    Args:
+        payload (dict): 検証対象データ
+        required_fields (list[str]): 必須フィールド名リスト
+    Raises:
+        ValueError: 欠損時
+    """
     for field in required_fields:
         if field not in payload or payload[field] in (None, ""):
             raise ValueError(f"missing required field: {field}")
 
 def to_pubsub_data(payload: dict[str, Any]) -> bytes:
+    """
+    dictをPub/Sub送信用のバイト列(JSON, UTF-8)に変換。
+    Args:
+        payload (dict): 送信データ
+    Returns:
+        bytes: エンコード済みデータ
+    """
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")

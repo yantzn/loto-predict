@@ -7,7 +7,21 @@ from src.utils.validators import validate_lottery_type, validate_numbers
 
 
 class ImportResultsCsvUseCase:
-    def __init__(self, settings, gcs_client, bq_client, repository, logger):
+    """
+    ユースケース: GCS上のCSVファイルをパースし、正規化してDB等へインポートする。
+    - 責務: バリデーション・正規化・リポジトリ呼び出し
+    - 外部I/F: gcs_client(GCS操作), repository(保存), logger(ロギング)
+    """
+
+    def __init__(self, settings, gcs_client, bq_client, repository, logger) -> None:
+        """
+        Args:
+            settings: 設定オブジェクト
+            gcs_client: GCSクライアント
+            bq_client: BigQueryクライアント
+            repository: データ保存リポジトリ
+            logger: ロギング用
+        """
         self.settings = settings
         self.gcs_client = gcs_client
         self.bq_client = bq_client
@@ -15,8 +29,20 @@ class ImportResultsCsvUseCase:
         self.logger = logger
 
     def execute(self, lottery_type: str, gcs_uri: str) -> dict:
+        """
+        GCS上のCSVをダウンロード・パースし、正規化して保存する。
+
+        Args:
+            lottery_type (str): 'loto6' または 'loto7'
+            gcs_uri (str): GCS URI (gs://...)
+
+        Returns:
+            dict: 保存結果サマリ
+        """
+        # ロト種別バリデーション
         lottery_type = validate_lottery_type(lottery_type)
 
+        # GCSからCSVテキスト取得
         bucket_name, object_name = self.gcs_client.parse_gcs_uri(gcs_uri)
         csv_text = self.gcs_client.download_text(bucket_name=bucket_name, blob_name=object_name)
         rows = list(csv.DictReader(io.StringIO(csv_text)))

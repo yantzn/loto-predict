@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from src.config.settings import settings
+from src.config.settings import get_settings
 from src.infrastructure.repositories.local_loto_repository import LocalLotoRepository
 from src.infrastructure.repositories.bigquery_loto_repository import BigQueryLotoRepository
 
@@ -12,9 +12,10 @@ def create_loto_repository(bq_client=None):
     table_loto7 = os.environ["BQ_TABLE_LOTO7_HISTORY"]
     prediction_runs_table = os.environ["BQ_TABLE_PREDICTION_RUNS"]
 
-    if settings.app_env == "local":
+    settings = get_settings()
+    if settings.env == "local":
         return LocalLotoRepository(
-            base_path=settings.local_storage_path,
+            base_path="./local_storage",
             table_loto6=table_loto6,
             table_loto7=table_loto7,
             prediction_runs_table=prediction_runs_table,
@@ -25,8 +26,8 @@ def create_loto_repository(bq_client=None):
 
     return BigQueryLotoRepository(
         bq_client=bq_client,
-        project_id=settings.gcp_project_id,
-        dataset=settings.bigquery_dataset,
+        project_id=settings.gcp.project_id,
+        dataset=settings.gcp.bigquery_dataset,
         table_loto6=table_loto6,
         table_loto7=table_loto7,
         prediction_runs_table=prediction_runs_table,

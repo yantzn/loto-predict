@@ -2,7 +2,7 @@ import random
 from datetime import datetime
 from src.infrastructure.bigquery_client import bq_client
 from src.infrastructure.line_client import line_client
-from src.config.settings import settings
+from src.config.settings import get_settings
 from src.domain.models import Prediction, PredictionRun
 from src.utils.logger import get_logger
 
@@ -12,19 +12,30 @@ LOTO6_MIN, LOTO6_MAX, LOTO6_PICK = 1, 43, 6
 LOTO7_MIN, LOTO7_MAX, LOTO7_PICK = 1, 37, 7
 
 
-def generate_and_notify_prediction(lottery_type):
+def generate_and_notify_prediction(lottery_type: str) -> dict:
+    """
+    ユースケース: 予想番号を生成し、LINE通知・記録を行う（旧ロジック）
+    - 責務: BigQueryから履歴取得、頻度集計、重み付き乱択、通知・記録
+
+    Args:
+        lottery_type (str): 'loto6' または 'loto7'
+
+    Returns:
+        dict: 予想結果サマリ
+    """
+    settings = get_settings()
     if lottery_type == 'loto6':
         table = 'loto6_history'
-        pick_count = LOTO6_PICK
-        number_min = LOTO6_MIN
-        number_max = LOTO6_MAX
-        history_limit = settings.HISTORY_LIMIT_LOTO6
+        pick_count = settings.lottery.loto6_pick_count
+        number_min = settings.lottery.loto6_number_min
+        number_max = settings.lottery.loto6_number_max
+        history_limit = settings.lottery.stats_target_draws
     elif lottery_type == 'loto7':
         table = 'loto7_history'
-        pick_count = LOTO7_PICK
-        number_min = LOTO7_MIN
-        number_max = LOTO7_MAX
-        history_limit = settings.HISTORY_LIMIT_LOTO7
+        pick_count = settings.lottery.loto7_pick_count
+        number_min = settings.lottery.loto7_number_min
+        number_max = settings.lottery.loto7_number_max
+        history_limit = settings.lottery.stats_target_draws
     else:
         logger.error('Invalid lottery_type')
         return None
@@ -37,7 +48,7 @@ def generate_and_notify_prediction(lottery_type):
         for i in range(1, pick_count+1):
             n = row[f'n{i}']
             freq[n] = freq.get(n, 1) + 1
-    # 重み付きランダム
+    # 重み付きランダム選択
     numbers = list(range(number_min, number_max+1))
     weights = [freq.get(n, 1) for n in numbers]
     predictions = []

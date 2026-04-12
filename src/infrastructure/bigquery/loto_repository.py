@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 
+#
+# LotoデータのBigQuery入出力リポジトリ
+# - テーブル名・IDの解決、行挿入などをラップ
+#
 class LotoRepository:
     def __init__(
         self,
@@ -18,6 +22,9 @@ class LotoRepository:
         self.table_loto7 = table_loto7
         self.prediction_runs_table = prediction_runs_table
 
+    #
+    # ロト種別からテーブル名を解決
+    #
     def _table_name(self, lottery_type: str) -> str:
         lottery_type = lottery_type.lower()
         if lottery_type == "loto6":
@@ -26,9 +33,17 @@ class LotoRepository:
             return self.table_loto7
         raise ValueError(f"unsupported lottery_type: {lottery_type}")
 
+    #
+    # ロト種別から完全なテーブルID（project.dataset.table）を生成
+    #
     def _table_id(self, lottery_type: str) -> str:
         return f"{self.project_id}.{self.dataset}.{self._table_name(lottery_type)}"
 
+    #
+    # 指定ロト種別のテーブルに行データを挿入
+    # - エラー時は例外送出
+    # - 挿入件数やdraw_no等を返す
+    #
     def import_rows(self, lottery_type: str, rows: list[dict]) -> dict:
         table_id = self._table_id(lottery_type)
         errors = self.bq_client.insert_rows_json(table_id, rows)

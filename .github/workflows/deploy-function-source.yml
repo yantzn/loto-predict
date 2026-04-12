@@ -1,10 +1,12 @@
-name: Deploy GCP Cloud Functions Source
+name: Deploy GCP Cloud Functions Source # Cloud Functionsデプロイ用ワークフロー
 
 on:
+  # mainブランチへのpushや手動実行で発火
   push:
     branches:
       - main
     paths:
+      # 関数・依存コード・スクリプト・ワークフローの変更時にのみ発火
       - "functions/**"
       - "src/**"
       - "requirements-base.txt"
@@ -13,17 +15,19 @@ on:
       - ".github/scripts/terraform_infra_wait.py"
       - ".github/workflows/deploy-function-source.yml"
   workflow_dispatch:
-
 permissions:
+  # OIDC認証やリポジトリ参照用
   contents: read
   id-token: write
   actions: read
 
 concurrency:
+  # 同一ブランチでの同時デプロイ競合防止
   group: app-deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
+  # GCPプロジェクト・リージョン・Cloud Functions用バケット等の環境変数
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   SOURCE_BUCKET_NAME: ${{ vars.FUNCTION_SOURCE_BUCKET }}
@@ -33,13 +37,15 @@ env:
   NOTIFY_OBJECT: functions/generate_prediction_and_notify/function-source.zip
 
 jobs:
+  # まずTerraform Infraワークフローの競合を回避
   wait-for-terraform:
+    # 他のTerraform Infraワークフローが終わるまで待機
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Wait until Terraform Infra is idle on this branch
+      - name: Wait until Terraform Infra is idle on this branch # 競合防止
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -52,6 +58,7 @@ jobs:
           python .github/scripts/terraform_infra_wait.py
 
   package-and-deploy:
+    # Cloud Functionsのパッケージング・デプロイ本体
     needs: wait-for-terraform
     runs-on: ubuntu-latest
 
@@ -59,7 +66,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate required variables
+      - name: Validate required variables # GCP変数の未設定チェック
         shell: bash
         run: |
           set -euo pipefail
@@ -67,7 +74,7 @@ jobs:
           test -n "${GCP_REGION}"
           test -n "${SOURCE_BUCKET_NAME}"
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud # OIDC認証
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -75,22 +82,22 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Set up gcloud
+      - name: Set up gcloud # gcloud CLIセットアップ
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set up Python
+      - name: Set up Python # パッケージング用Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Package functions
+      - name: Package functions # 関数zip生成
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./.github/scripts/package_functions.sh
           bash ./.github/scripts/package_functions.sh
 
-      - name: Verify packaged archives
+      - name: Verify packaged archives # zip生成確認
         shell: bash
         run: |
           set -euo pipefail
@@ -98,7 +105,7 @@ jobs:
           test -f dist/import_loto_results_to_bq.zip
           test -f dist/generate_prediction_and_notify.zip
 
-      - name: Upload packaged archives to source bucket
+      - name: Upload packaged archives to source bucket # GCSアップロード
         shell: bash
         run: |
           set -euo pipefail
@@ -106,7 +113,7 @@ jobs:
           gcloud storage cp dist/import_loto_results_to_bq.zip gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
           gcloud storage cp dist/generate_prediction_and_notify.zip gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}
 
-      - name: Prepare deploy sources
+      - name: Prepare deploy sources # zip展開
         shell: bash
         run: |
           set -euo pipefail
@@ -116,7 +123,7 @@ jobs:
           unzip -q dist/import_loto_results_to_bq.zip -d .deploy/import
           unzip -q dist/generate_prediction_and_notify.zip -d .deploy/notify
 
-      - name: Redeploy fetch-loto-results
+      - name: Redeploy fetch-loto-results # 関数デプロイ
         shell: bash
         run: |
           set -euo pipefail
@@ -129,7 +136,7 @@ jobs:
             --source=.deploy/fetch \
             --trigger-http
 
-      - name: Redeploy import-loto-results-to-bq
+      - name: Redeploy import-loto-results-to-bq # 関数デプロイ
         shell: bash
         run: |
           set -euo pipefail
@@ -142,7 +149,7 @@ jobs:
             --source=.deploy/import \
             --trigger-http
 
-      - name: Redeploy generate-prediction-and-notify
+      - name: Redeploy generate-prediction-and-notify # 関数デプロイ
         shell: bash
         run: |
           set -euo pipefail

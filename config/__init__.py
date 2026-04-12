@@ -1,3 +1,1 @@
-from config.settings import AppSettings, get_settings
-
-__all__ = ["AppSettings", "get_settings"]
+# 削除済み: src/config/settings.py に統合

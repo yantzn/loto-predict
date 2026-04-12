@@ -1,3 +1,5 @@
+# data_fetcher.py
+import requests
 from datetime import datetime
 
 def fetch_latest_loto_results(lottery_type: str) -> dict | None:

@@ -1,3 +1,8 @@
+# =====================================
+# ロト番号統計計算ロジック
+# - 出現頻度・加重頻度・直近出現補正などをスコア化
+# =====================================
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,6 +11,18 @@ from typing import Iterable
 from domain.models import DrawHistory, LotteryType
 
 
+
+
+
+#
+# 直近出現補正値を計算
+# - 未出現なら0、出現が新しいほど大きい
+#
+#
+# - 頻度・加重頻度・直近出現補正を合算
+# - historiesは新しい順（index=0が最新）
+#
+#
 @dataclass(frozen=True)
 class LotteryRule:
     lottery_type: LotteryType
@@ -16,9 +33,11 @@ class LotteryRule:
 
     @property
     def population(self) -> range:
+        # 有効な番号範囲（1〜max）
         return range(self.min_number, self.max_number + 1)
 
 
+# LOTO6/LOTO7のルール定義（定数）
 LOTO6_RULE = LotteryRule(
     lottery_type=LotteryType.LOTO6,
     min_number=1,
@@ -36,6 +55,9 @@ LOTO7_RULE = LotteryRule(
 )
 
 
+#
+# 各番号ごとの統計値
+#
 @dataclass(frozen=True)
 class NumberStatistics:
     number: int
@@ -46,6 +68,10 @@ class NumberStatistics:
     final_score: float
 
 
+#
+# 統計計算パラメータ設定
+# - 各要素の重みや減衰率、ボーナス数字の扱いなど
+#
 @dataclass(frozen=True)
 class StatisticsConfig:
     """
@@ -67,6 +93,7 @@ class StatisticsConfig:
     include_bonus_numbers: bool = False
 
     def validate(self) -> None:
+        # パラメータの妥当性検証
         if self.frequency_weight < 0:
             raise ValueError("frequency_weight must be >= 0")
         if self.weighted_frequency_weight < 0:
@@ -148,6 +175,9 @@ def build_number_scores(
 
 
 def rank_numbers_by_score(
+#
+# スコア順に番号を並べたリストを返す（降順/昇順選択可）
+#
     histories: list[DrawHistory],
     rule: LotteryRule,
     config: StatisticsConfig | None = None,
@@ -184,6 +214,9 @@ def _validate_histories(histories: Iterable[DrawHistory], rule: LotteryRule) -> 
         if history.draw_no <= 0:
             raise ValueError(f"draw_no must be > 0: {history.draw_no}")
 
+    #
+    # 履歴データの妥当性検証
+    # - 本数字・ボーナス数字の数・範囲・重複・重なり等
         if len(history.main_numbers) != rule.pick_count:
             raise ValueError(
                 f"main_numbers count must be {rule.pick_count}: {history.main_numbers}"

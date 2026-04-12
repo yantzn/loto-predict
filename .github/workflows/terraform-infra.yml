@@ -1,24 +1,28 @@
-name: Terraform Infra
+name: Terraform Infra # GCPインフラ構築用ワークフロー
 
 on:
+  # mainブランチへのpushや手動実行で発火
   push:
     branches:
       - main
     paths:
+      # インフラ定義・ワークフロー自身の変更時のみ発火
       - "infra/**"
       - ".github/workflows/terraform-infra.yml"
   workflow_dispatch:
-
 permissions:
+  # OIDC認証やリポジトリ参照用
   contents: read
   id-token: write
   actions: read
 
 concurrency:
+  # 同一ブランチでの同時apply競合防止
   group: infra-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
+  # Terraform/GCP/シークレット等の環境変数
   TF_IN_AUTOMATION: true
   TF_INPUT: false
   TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
@@ -36,22 +40,25 @@ env:
   LINE_USER_ID_SECRET_VERSION: ${{ vars.LINE_USER_ID_SECRET_VERSION }}
 
 jobs:
+  # Terraformによるインフラ構築
   terraform:
     runs-on: ubuntu-latest
 
     defaults:
+      # infra/配下でコマンド実行
       run:
         shell: bash
         working-directory: infra
 
     steps:
+      # コードチェックアウト
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create plugin cache dir
+      - name: Create plugin cache dir # プラグインキャッシュ
         run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
 
-      - name: Validate required variables
+      - name: Validate required variables # GCP/TF変数の未設定チェック
         run: |
           set -euo pipefail
           test -n "${GCP_PROJECT_ID}"
@@ -64,7 +71,7 @@ jobs:
           test -n "${LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID}"
           test -n "${LINE_USER_ID_SECRET_ID}"
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud # OIDC認証
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -72,27 +79,27 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Set up gcloud
+      - name: Set up gcloud # gcloud CLIセットアップ
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set up Terraform
+      - name: Set up Terraform # Terraformセットアップ
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      - name: Terraform fmt
+      - name: Terraform fmt # フォーマットチェック
         run: terraform fmt -check -recursive
 
-      - name: Terraform init
+      - name: Terraform init # 初期化
         run: |
           set -euo pipefail
           terraform init -reconfigure \
             -backend-config="bucket=${TFSTATE_BUCKET}"
 
-      - name: Terraform validate
+      - name: Terraform validate # 構文バリデーション
         run: terraform validate
 
-      - name: Terraform plan
+      - name: Terraform plan # 変更プラン作成
         env:
           FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL: ${{ secrets.FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL }}
           SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL: ${{ secrets.SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL }}
@@ -116,6 +123,6 @@ jobs:
             -var="cloud_run_jobs_service_account_email=${CLOUD_RUN_JOBS_SERVICE_ACCOUNT_EMAIL}" \
             -out=tfplan
 
-      - name: Terraform apply
+      - name: Terraform apply # 本番apply（mainブランチのみ）
         if: github.ref == 'refs/heads/main'
         run: terraform apply -lock-timeout=5m -auto-approve tfplan

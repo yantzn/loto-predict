@@ -15,7 +15,7 @@ PROJECT_ROOT = CURRENT_DIR.parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.config.settings import settings
+from src.config.settings import get_settings
 from src.infrastructure.bigquery.bigquery_client import BigQueryClient
 from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.repositories.repository_factory import create_loto_repository
@@ -61,7 +61,8 @@ def _publish_notify_message(
     draw_no: int | None,
     skipped_as_duplicate: bool,
 ) -> str:
-    if settings.app_env == "local":
+    settings = get_settings()
+    if settings.env == "local":
         logger.info(
             "Skip Pub/Sub publish in local mode. execution_id=%s lottery_type=%s draw_no=%s",
             execution_id,
@@ -71,7 +72,7 @@ def _publish_notify_message(
         return "local-skip"
 
     publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(settings.gcp_project_id, NOTIFY_TOPIC_NAME)
+    topic_path = publisher.topic_path(settings.gcp.project_id, NOTIFY_TOPIC_NAME)
 
     message = {
         "event_type": "IMPORT_COMPLETED",
@@ -88,16 +89,28 @@ def _publish_notify_message(
     return future.result()
 
 
-def entry_point(request):
+def entry_point(request) -> tuple[str, int, dict[str, str]]:
+    """
+    Cloud Functionsエントリーポイント。
+    GCS/ローカルのCSVをBigQueryに取り込み、完了通知をPub/Subで発行。
+    Pub/SubまたはHTTPトリガーで呼ばれる。
+
+    Args:
+        request: Flaskリクエストオブジェクト（GCP Functions標準）
+    Returns:
+        (body, status_code, headers) のタプル
+    """
     execution_id = ""
     lottery_type = ""
     bucket_name = ""
     object_name = ""
-
     try:
+        # Pub/Sub経由・HTTP経由どちらも吸収する
         message = _extract_event_message(request)
 
-        if settings.app_env == "local":
+        # ローカル実行時はバケット名不要
+        settings = get_settings()
+        if settings.env == "local":
             _require_fields(message, ["execution_id", "lottery_type", "gcs_object"])
             execution_id = str(message["execution_id"]).strip()
             lottery_type = str(message["lottery_type"]).strip().lower()
@@ -109,10 +122,13 @@ def entry_point(request):
             bucket_name = str(message["gcs_bucket"]).strip()
             object_name = str(message["gcs_object"]).strip()
 
+        # GCS/ローカルストレージクライアント生成
         storage_client = create_storage_client()
-        bq_client = None if settings.app_env == "local" else BigQueryClient(project_id=settings.gcp_project_id)
+        # GCP実行時のみBigQueryクライアントを生成
+        bq_client = None if settings.env == "local" else BigQueryClient(project_id=settings.gcp.project_id)
         repository = create_loto_repository(bq_client=bq_client)
 
+        # ユースケース呼び出し（ビジネスロジックはusecase層に集約）
         usecase = ImportResultsCsvUseCase(
             settings=settings,
             gcs_client=storage_client,
@@ -121,6 +137,7 @@ def entry_point(request):
             logger=logger,
         )
 
+        # ローカル実行時はfile://、GCP時はgs://でURIを組み立て
         if settings.app_env == "local":
             storage_uri = f"file://{object_name}"
         else:
@@ -131,6 +148,7 @@ def entry_point(request):
         draw_no = result.get("draw_no")
         skipped_as_duplicate = bool(result.get("skipped_as_duplicate", False))
 
+        # 取込完了をPub/Subで通知（ローカル時はスキップ）
         publish_message_id = _publish_notify_message(
             execution_id=execution_id,
             lottery_type=lottery_type.upper(),
@@ -150,6 +168,7 @@ def entry_point(request):
         )
 
     except Exception as exc:
+        # 例外発生時は詳細ログを残し、エラー内容を返す
         logger.exception(
             "import_loto_results_to_bq failed. execution_id=%s lottery_type=%s object=%s",
             execution_id,
