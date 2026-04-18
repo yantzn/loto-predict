@@ -332,7 +332,6 @@ Pub/Sub(notify-loto-prediction)
 
 重複防止:
 
-- `source_file_name`
 - `draw_no`
 
 ---
@@ -449,7 +448,6 @@ execution_id = 20260405-loto6-001
 
 以下のどちらかに該当したら取り込みをスキップします。
 
-- 同じ `source_file_name`
 - 同じ `draw_no`
 
 ### notify 側
