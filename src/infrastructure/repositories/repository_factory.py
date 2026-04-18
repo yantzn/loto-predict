@@ -15,10 +15,6 @@ def _get_table_name(name: str, default: str) -> str:
 
 
 def create_loto_repository(bq_client=None):
-    """
-    実行環境に応じて repository を返す。
-    local では LocalLotoRepository、それ以外では BigQueryLotoRepository を使う。
-    """
     settings = get_settings()
 
     table_loto6 = _get_table_name("BQ_TABLE_LOTO6_HISTORY", "loto6_history")
@@ -27,7 +23,7 @@ def create_loto_repository(bq_client=None):
 
     if settings.is_local:
         return LocalLotoRepository(
-            base_path=settings.local.storage_path,
+            base_path=settings.local_storage_path,
             table_loto6=table_loto6,
             table_loto7=table_loto7,
             prediction_runs_table=prediction_runs_table,

@@ -1,0 +1,32 @@
+from src.config.settings import get_settings
+
+
+def test_get_settings_loads_line_user_id(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("APP_TIMEZONE", "Asia/Tokyo")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("GCP_REGION", "asia-northeast1")
+    monkeypatch.setenv("BQ_DATASET", "loto_predict")
+    monkeypatch.setenv("LINE_CHANNEL_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("LINE_USER_ID", "user-123")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.app_env == "local"
+    assert settings.line.user_id == "user-123"
+    assert settings.is_local is True
+    assert settings.lottery.stats_target_draws_for("loto6") == settings.lottery.history_limit_loto6
+    assert settings.lottery.stats_target_draws_for("loto7") == settings.lottery.history_limit_loto7
+
+
+def test_get_settings_production_flag(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "gcp")
+    monkeypatch.setenv("LINE_USER_ID", "user-123")
+    monkeypatch.setenv("LINE_CHANNEL_ACCESS_TOKEN", "token")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.is_local is False
+    assert settings.is_production is True

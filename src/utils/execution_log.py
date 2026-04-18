@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # 環境変数からBigQueryの各種設定を取得
 PROJECT_ID = os.environ["GCP_PROJECT_ID"]  # GCPプロジェクトID
-DATASET_ID = os.environ["BIGQUERY_DATASET"]  # BigQueryデータセット名
+DATASET_ID = os.environ["BQ_DATASET"]  # BigQueryデータセット名
 TABLE_EXECUTION_LOGS = os.getenv("BQ_TABLE_EXECUTION_LOGS", "execution_logs")  # 実行ログテーブル名
 
 # BigQueryクライアント初期化

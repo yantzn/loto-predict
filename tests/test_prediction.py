@@ -1,31 +1,44 @@
-import pytest
-from src.usecases.loto_prediction_usecase import generate_and_notify_prediction
+from src.domain.prediction import generate_predictions
 
 
-def test_generate_prediction_loto6(monkeypatch):
-    """
-    loto6予想生成のユースケースが5口返すことを検証。
-    BigQuery, LINEはモック化。
-    """
-    # BigQuery, LINEをモック
-    monkeypatch.setattr("src.infrastructure.bigquery_client.bq_client.fetch_history", lambda table, limit: [
-        {'draw_number': 1, 'n1': 1, 'n2': 2, 'n3': 3, 'n4': 4, 'n5': 5, 'n6': 6}
-    ])
-    monkeypatch.setattr("src.infrastructure.line_client.line_client.notify", lambda msg: None)
-    result = generate_and_notify_prediction('loto6')
-    assert 'predictions' in result
-    assert len(result['predictions']) == 5
+def _history_rows(lottery_type: str) -> list[dict[str, object]]:
+    if lottery_type == "loto6":
+        return [
+            {"draw_no": 1, "n1": 1, "n2": 2, "n3": 3, "n4": 4, "n5": 5, "n6": 6},
+            {"draw_no": 2, "n1": 1, "n2": 8, "n3": 13, "n4": 21, "n5": 34, "n6": 42},
+            {"draw_no": 3, "n1": 2, "n2": 4, "n3": 6, "n4": 8, "n5": 10, "n6": 12},
+        ]
+
+    return [
+        {"draw_no": 1, "n1": 1, "n2": 2, "n3": 3, "n4": 4, "n5": 5, "n6": 6, "n7": 7},
+        {"draw_no": 2, "n1": 2, "n2": 4, "n3": 6, "n4": 8, "n5": 10, "n6": 12, "n7": 14},
+        {"draw_no": 3, "n1": 7, "n2": 11, "n3": 13, "n4": 17, "n5": 19, "n6": 23, "n7": 29},
+    ]
 
 
-def test_generate_prediction_loto7(monkeypatch):
-    """
-    loto7予想生成のユースケースが5口返すことを検証。
-    BigQuery, LINEはモック化。
-    """
-    monkeypatch.setattr("src.infrastructure.bigquery_client.bq_client.fetch_history", lambda table, limit: [
-        {'draw_number': 1, 'n1': 1, 'n2': 2, 'n3': 3, 'n4': 4, 'n5': 5, 'n6': 6, 'n7': 7}
-    ])
-    monkeypatch.setattr("src.infrastructure.line_client.line_client.notify", lambda msg: None)
-    result = generate_and_notify_prediction('loto7')
-    assert 'predictions' in result
-    assert len(result['predictions']) == 5
+def test_generate_predictions_loto6_unique_and_sorted() -> None:
+    predictions = generate_predictions(
+        history_rows=_history_rows("loto6"),
+        lottery_type="loto6",
+        prediction_count=5,
+        seed=123,
+    )
+
+    assert len(predictions) == 5
+    assert len({tuple(prediction) for prediction in predictions}) == 5
+    assert all(len(prediction) == 6 for prediction in predictions)
+    assert all(prediction == sorted(prediction) for prediction in predictions)
+
+
+def test_generate_predictions_loto7_pick_count_is_seven() -> None:
+    predictions = generate_predictions(
+        history_rows=_history_rows("loto7"),
+        lottery_type="loto7",
+        prediction_count=5,
+        seed=456,
+    )
+
+    assert len(predictions) == 5
+    assert len({tuple(prediction) for prediction in predictions}) == 5
+    assert all(len(prediction) == 7 for prediction in predictions)
+    assert all(1 <= number <= 37 for prediction in predictions for number in prediction)

@@ -4,67 +4,54 @@ import random
 from collections import Counter
 
 
-def _lottery_spec(lottery_type: str) -> tuple[int, int]:
-    """
-    Returns (max_number, pick_count) for the given lottery_type.
-    """
-    normalized = lottery_type.lower()
+def _lottery_spec(lottery_type: str) -> tuple[int, int, int]:
+    normalized = str(lottery_type).strip().lower()
     if normalized == "loto6":
-        return 43, 6
+        return 1, 43, 6
     if normalized == "loto7":
-        return 37, 7
+        return 1, 37, 7
     raise ValueError(f"unsupported lottery_type: {lottery_type}")
 
 
-def build_number_weights(history_rows: list[dict[str, object]], lottery_type: str) -> dict[int, float]:
-    """
-    各数字の出現頻度・直近重みから重み辞書を構築
-    """
-    max_number, pick_count = _lottery_spec(lottery_type)
-    counter: Counter[int] = Counter()
-    recent_boost: Counter[int] = Counter()
+def _extract_numbers(history_rows: list[dict[str, object]], lottery_type: str) -> list[int]:
+    _, _, pick_count = _lottery_spec(lottery_type)
+    numbers: list[int] = []
 
-    for index, row in enumerate(history_rows):
-        numbers: list[int] = []
-        for number_index in range(1, pick_count + 1):
-            value = row.get(f"n{number_index}")
-            if value is not None:
-                numbers.append(int(value))
+    for row in history_rows:
+        for index in range(1, pick_count + 1):
+            value = row.get(f"n{index}")
+            if value is None:
+                continue
+            numbers.append(int(value))
 
-        counter.update(numbers)
+    return numbers
 
-        # 直近寄りの履歴ほど少し重みを上げる
-        boost = max(1, len(history_rows) - index)
-        for number in numbers:
-            recent_boost[number] += boost
 
+def _build_weights(history_rows: list[dict[str, object]], lottery_type: str) -> dict[int, float]:
+    number_min, number_max, _ = _lottery_spec(lottery_type)
+    counts = Counter(_extract_numbers(history_rows, lottery_type))
+
+    # 出現頻度をそのまま重みに使い、未出現でも選ばれる余地を残す。
     weights: dict[int, float] = {}
-    for number in range(1, max_number + 1):
-        frequency = counter[number]
-        recency = recent_boost[number]
-        # 完全ゼロでも選ばれる余地を残す
-        weights[number] = 1.0 + (frequency * 1.0) + (recency * 0.05)
-
+    for number in range(number_min, number_max + 1):
+        weights[number] = 1.0 + float(counts.get(number, 0))
     return weights
 
 
-def weighted_sample_without_replacement(
+def _weighted_sample_without_replacement(
     population: list[int],
     weights: dict[int, float],
-    k: int,
+    sample_size: int,
     rng: random.Random,
 ) -> list[int]:
-    """
-    重み付きで重複なしサンプリング
-    """
-    if k > len(population):
+    if sample_size > len(population):
         raise ValueError("sample size is larger than population")
 
     available = list(population)
     selected: list[int] = []
 
-    while len(selected) < k:
-        available_weights = [max(0.0001, weights.get(num, 1.0)) for num in available]
+    while len(selected) < sample_size:
+        available_weights = [max(weights.get(number, 1.0), 0.000001) for number in available]
         chosen = rng.choices(available, weights=available_weights, k=1)[0]
         selected.append(chosen)
         available.remove(chosen)
@@ -75,40 +62,39 @@ def weighted_sample_without_replacement(
 def generate_predictions(
     history_rows: list[dict[str, object]],
     lottery_type: str,
-    prediction_count: int = 5,
+    prediction_count: int,
     seed: int | None = None,
 ) -> list[list[int]]:
-    """
-    指定履歴から予想番号リストを生成
-    """
-    max_number, pick_count = _lottery_spec(lottery_type)
-    population = list(range(1, max_number + 1))
-    weights = build_number_weights(history_rows, lottery_type=lottery_type)
+    number_min, number_max, pick_count = _lottery_spec(lottery_type)
+    if prediction_count <= 0:
+        raise ValueError("prediction_count must be greater than 0")
 
+    population = list(range(number_min, number_max + 1))
+    weights = _build_weights(history_rows, lottery_type)
     rng = random.Random(seed)
-    unique_predictions: set[tuple[int, ...]] = set()
-    results: list[list[int]] = []
 
-    max_attempts = max(200, prediction_count * 50)
+    predictions: list[list[int]] = []
+    seen_combinations: set[tuple[int, ...]] = set()
+    max_attempts = max(100, prediction_count * 100)
     attempts = 0
 
-    while len(results) < prediction_count and attempts < max_attempts:
+    while len(predictions) < prediction_count and attempts < max_attempts:
         attempts += 1
-        picked = weighted_sample_without_replacement(
+        candidate = _weighted_sample_without_replacement(
             population=population,
             weights=weights,
-            k=pick_count,
+            sample_size=pick_count,
             rng=rng,
         )
-        key = tuple(picked)
-        if key in unique_predictions:
+        candidate_key = tuple(candidate)
+        if candidate_key in seen_combinations:
             continue
-        unique_predictions.add(key)
-        results.append(picked)
+        seen_combinations.add(candidate_key)
+        predictions.append(candidate)
 
-    if len(results) < prediction_count:
+    if len(predictions) != prediction_count:
         raise RuntimeError(
-            f"failed to generate enough unique predictions: requested={prediction_count} generated={len(results)}"
+            f"failed to generate enough unique predictions: requested={prediction_count} generated={len(predictions)}"
         )
 
-    return results
+    return predictions

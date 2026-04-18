@@ -451,10 +451,26 @@ SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL
 
 ```text
 LINE_CHANNEL_ACCESS_TOKEN
-LINE_TO_USER_ID
+LINE_USER_ID
 ```
 
 Terraform では secret の**ID**を変数で受け取り、Cloud Functions の Secret Environment Variables に設定します。
+
+---
+
+## ブランチ運用
+
+- `develop` への push で function / job のデプロイワークフローを動かし、Terraform は plan / validate を実行します。
+- `main` への push では同じワークフローに加えて Terraform apply を実行します。
+- そのため、コード修正は `develop` で検証し、`main` を本番反映の基準にします。
+
+---
+
+## ローカル実行
+
+1. `.env.local.sample` を `.env.local` として用意し、`APP_ENV=local` と `LINE_USER_ID` を設定します。
+2. `LOCAL_STORAGE_PATH` 配下に CSV を保存するので、ローカルでは GCS なしでも実行できます。
+3. 予想確認は `pytest`、バックフィルは `python jobs/backfill_loto_history/main.py --lottery-type loto6 --start-date 2026-01-01 --end-date 2026-04-01 --output-path ./local_storage/backfill.csv` のように実行できます。
 
 ---
 

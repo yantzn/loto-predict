@@ -42,7 +42,7 @@ resource "google_cloud_run_v2_job" "backfill_loto_history" {
         }
 
         env {
-          name  = "BIGQUERY_DATASET"
+          name  = "BQ_DATASET"
           value = google_bigquery_dataset.dataset.dataset_id
         }
 

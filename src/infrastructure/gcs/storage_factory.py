@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Protocol
 
-from src.config.settings import get_settings
+from src.config.settings import AppSettings, get_settings
 
 
 class StorageClientProtocol(Protocol):
@@ -68,9 +67,8 @@ class GCSStorageClient:
         return blob.download_as_text(encoding=encoding)
 
 
-def create_storage_client():
-    settings = get_settings()
-    if settings.is_local:
-        return LocalStorageClient(settings.local.storage_path)
-    else:
-        return GCSStorageClient(project_id=getattr(settings, "gcp", None) and settings.gcp.project_id or None)
+def create_storage_client(settings: AppSettings | None = None) -> StorageClientProtocol:
+    app_settings = settings or get_settings()
+    if app_settings.is_local:
+        return LocalStorageClient(app_settings.local_storage_path)
+    return GCSStorageClient(project_id=app_settings.gcp.project_id)

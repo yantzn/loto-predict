@@ -14,12 +14,6 @@ def _first_env(*names: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
-def _to_bool(value: Optional[str], default: bool = False) -> bool:
-    if value is None:
-        return default
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _to_int(value: Optional[str], default: int) -> int:
     if value is None or str(value).strip() == "":
         return default
@@ -50,7 +44,7 @@ class LotterySettings:
     loto7_pick_count: int
 
     def stats_target_draws_for(self, lottery_type: str) -> int:
-        normalized = lottery_type.strip().lower()
+        normalized = str(lottery_type).strip().lower()
         if normalized == "loto6":
             return self.history_limit_loto6 or self.default_stats_target_draws
         if normalized == "loto7":
@@ -61,109 +55,80 @@ class LotterySettings:
 @dataclass(frozen=True)
 class LineSettings:
     channel_access_token: str
-    import os
-    from dataclasses import dataclass, asdict
-
-    @dataclass
-    class LotterySettings:
-        prediction_count: int = int(os.getenv("PREDICTION_COUNT", 5))
-        history_limit_loto6: int = int(os.getenv("HISTORY_LIMIT_LOTO6", 100))
-        history_limit_loto7: int = int(os.getenv("HISTORY_LIMIT_LOTO7", 100))
-        stats_target_draws: int = int(os.getenv("STATS_TARGET_DRAWS", 50))
-
-        def stats_target_draws_for(self, lottery_type: str) -> int:
-            if lottery_type == "loto6":
-                return self.history_limit_loto6
-            elif lottery_type == "loto7":
-                return self.history_limit_loto7
-            return self.stats_target_draws
-
-    @dataclass
-    class LocalSettings:
-        storage_path: str = os.getenv("LOCAL_STORAGE_PATH", "./local_storage")
+    user_id: str
 
 
-    # AppSettingsにapp_envのみを持たせ、is_local/is_productionはapp_envで判定
-    @dataclass(frozen=True)
-    class AppSettings:
-        app_env: str
-        timezone: str
-        gcp: GCPSettings
-        lottery: LotterySettings
-        line: LineSettings
-        logging: 'LoggingSettings'
-        local: LocalSettings
+@dataclass(frozen=True)
+class LoggingSettings:
+    level: str
+    service_name: str
 
-        @property
-        def is_local(self) -> bool:
-            return self.app_env == "local"
 
-        @property
-        def is_production(self) -> bool:
-            return self.app_env == "production"
+@dataclass(frozen=True)
+class AppSettings:
+    app_env: str
+    app_timezone: str
+    gcp: GCPSettings
+    lottery: LotterySettings
+    line: LineSettings
+    logging: LoggingSettings
+    local_storage_path: str
 
-        def safe_dict(self) -> dict[str, object]:
-            return {
-                "app_env": self.app_env,
-                "timezone": self.timezone,
-                "gcp": {
-                    "project_id": self.gcp.project_id,
-                    "region": self.gcp.region,
-                    "bigquery_dataset": self.gcp.bigquery_dataset,
-                    "raw_bucket_name": self.gcp.raw_bucket_name,
-                    "import_topic_name": self.gcp.import_topic_name,
-                    "notify_topic_name": self.gcp.notify_topic_name,
-                },
-                "lottery": {
-                    "default_stats_target_draws": self.lottery.default_stats_target_draws,
-                    "history_limit_loto6": self.lottery.history_limit_loto6,
-                    "history_limit_loto7": self.lottery.history_limit_loto7,
-                    "prediction_count": self.lottery.prediction_count,
-                },
-                "line": {
-                    "channel_access_token_configured": bool(self.line.channel_access_token),
-                    "user_id_configured": bool(self.line.user_id),
-                },
-                "local": {
-                    "storage_path": self.local.storage_path,
-                },
-            }
+    @property
+    def is_local(self) -> bool:
+        return self.app_env.lower() == "local"
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in {"production", "prod", "gcp"}
 
 
 def _validate(settings: AppSettings) -> None:
-    if settings.lottery.prediction_count <= 0:
+    lottery = settings.lottery
+
+    if lottery.default_stats_target_draws <= 0:
+        raise ValueError("STATS_TARGET_DRAWS must be greater than 0")
+    if lottery.history_limit_loto6 <= 0:
+        raise ValueError("HISTORY_LIMIT_LOTO6 must be greater than 0")
+    if lottery.history_limit_loto7 <= 0:
+        raise ValueError("HISTORY_LIMIT_LOTO7 must be greater than 0")
+    if lottery.prediction_count <= 0:
         raise ValueError("PREDICTION_COUNT must be greater than 0")
-
-    if settings.lottery.loto6_pick_count > (
-        settings.lottery.loto6_number_max - settings.lottery.loto6_number_min + 1
-    ):
+    if lottery.loto6_number_min > lottery.loto6_number_max:
+        raise ValueError("LOTO6_NUMBER_MIN must be <= LOTO6_NUMBER_MAX")
+    if lottery.loto7_number_min > lottery.loto7_number_max:
+        raise ValueError("LOTO7_NUMBER_MIN must be <= LOTO7_NUMBER_MAX")
+    if lottery.loto6_pick_count <= 0:
+        raise ValueError("LOTO6_PICK_COUNT must be greater than 0")
+    if lottery.loto7_pick_count <= 0:
+        raise ValueError("LOTO7_PICK_COUNT must be greater than 0")
+    if lottery.loto6_pick_count > (lottery.loto6_number_max - lottery.loto6_number_min + 1):
         raise ValueError("LOTO6_PICK_COUNT is larger than available range")
-
-    if settings.lottery.loto7_pick_count > (
-        settings.lottery.loto7_number_max - settings.lottery.loto7_number_min + 1
-    ):
+    if lottery.loto7_pick_count > (lottery.loto7_number_max - lottery.loto7_number_min + 1):
         raise ValueError("LOTO7_PICK_COUNT is larger than available range")
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
-    env = _first_env("APP_ENV", "ENV", default="local") or "local"
+    app_env = _first_env("APP_ENV", default="local") or "local"
+    app_timezone = _first_env("APP_TIMEZONE", default="Asia/Tokyo") or "Asia/Tokyo"
+    default_stats_target_draws = _to_int(_first_env("STATS_TARGET_DRAWS"), 100)
 
     settings = AppSettings(
-        env=env,
-        timezone=_first_env("APP_TIMEZONE", "TIMEZONE", default="Asia/Tokyo") or "Asia/Tokyo",
+        app_env=app_env,
+        app_timezone=app_timezone,
         gcp=GCPSettings(
             project_id=_first_env("GCP_PROJECT_ID", default="") or "",
             region=_first_env("GCP_REGION", default="asia-northeast1") or "asia-northeast1",
-            bigquery_dataset=_first_env("BIGQUERY_DATASET", "BQ_DATASET", default="loto_predict") or "loto_predict",
-            raw_bucket_name=_first_env("GCS_BUCKET_RAW", "RAW_BUCKET_NAME", default="") or "",
+            bigquery_dataset=_first_env("BQ_DATASET", default="loto_predict") or "loto_predict",
+            raw_bucket_name=_first_env("GCS_BUCKET_RAW", default="") or "",
             import_topic_name=_first_env("PUBSUB_IMPORT_TOPIC", default="import-loto-results") or "import-loto-results",
             notify_topic_name=_first_env("PUBSUB_NOTIFY_TOPIC", default="notify-loto-prediction") or "notify-loto-prediction",
         ),
         lottery=LotterySettings(
-            default_stats_target_draws=_to_int(_first_env("STATS_TARGET_DRAWS"), 100),
-            history_limit_loto6=_to_int(_first_env("HISTORY_LIMIT_LOTO6", "STATS_TARGET_DRAWS"), 100),
-            history_limit_loto7=_to_int(_first_env("HISTORY_LIMIT_LOTO7", "STATS_TARGET_DRAWS"), 100),
+            default_stats_target_draws=default_stats_target_draws,
+            history_limit_loto6=_to_int(_first_env("HISTORY_LIMIT_LOTO6"), default_stats_target_draws),
+            history_limit_loto7=_to_int(_first_env("HISTORY_LIMIT_LOTO7"), default_stats_target_draws),
             prediction_count=_to_int(_first_env("PREDICTION_COUNT"), 5),
             loto6_number_min=_to_int(_first_env("LOTO6_NUMBER_MIN"), 1),
             loto6_number_max=_to_int(_first_env("LOTO6_NUMBER_MAX"), 43),
@@ -180,9 +145,7 @@ def get_settings() -> AppSettings:
             level=_first_env("LOG_LEVEL", default="INFO") or "INFO",
             service_name=_first_env("SERVICE_NAME", default="loto-predict") or "loto-predict",
         ),
-        local=LocalSettings(
-            storage_path=_first_env("LOCAL_STORAGE_PATH", default="./local_storage") or "./local_storage",
-        ),
+        local_storage_path=_first_env("LOCAL_STORAGE_PATH", default="./local_storage") or "./local_storage",
     )
     _validate(settings)
     return settings

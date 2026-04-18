@@ -1,81 +1,77 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
-from typing import Sequence
+from datetime import datetime
 
 
 @dataclass(frozen=True)
 class LotoResult:
     lottery_type: str
     draw_no: int
-    draw_date: date
-    main_numbers: tuple[int, ...]
-    bonus_numbers: tuple[int, ...]
-    source_url: str
+    draw_date: str
+    main_numbers: list[int]
+    bonus_numbers: list[int]
+    source_url: str = ""
 
     def validate(self) -> None:
-        lottery_type = self.lottery_type.lower()
-
-        if lottery_type == "loto6":
-            expected_main = 6
-            expected_bonus = 1
-            min_number = 1
+        normalized_type = self.lottery_type.strip().lower()
+        if normalized_type == "loto6":
+            expected_main_count = 6
+            expected_bonus_count = 1
             max_number = 43
-        elif lottery_type == "loto7":
-            expected_main = 7
-            expected_bonus = 2
-            min_number = 1
+        elif normalized_type == "loto7":
+            expected_main_count = 7
+            expected_bonus_count = 2
             max_number = 37
         else:
             raise ValueError(f"unsupported lottery_type: {self.lottery_type}")
 
         if self.draw_no <= 0:
             raise ValueError("draw_no must be greater than 0")
+        if len(self.main_numbers) != expected_main_count:
+            raise ValueError(f"{normalized_type} main_numbers must be {expected_main_count}")
+        if len(self.bonus_numbers) != expected_bonus_count:
+            raise ValueError(f"{normalized_type} bonus_numbers must be {expected_bonus_count}")
 
-        if len(self.main_numbers) != expected_main:
-            raise ValueError(
-                f"{lottery_type}: main_numbers must contain {expected_main} items"
-            )
-
-        if len(self.bonus_numbers) != expected_bonus:
-            raise ValueError(
-                f"{lottery_type}: bonus_numbers must contain {expected_bonus} items"
-            )
-
-        all_numbers = list(self.main_numbers) + list(self.bonus_numbers)
-
-        for number in all_numbers:
-            if number < min_number or number > max_number:
-                raise ValueError(
-                    f"{lottery_type}: number out of range: {number} "
-                    f"(allowed: {min_number}-{max_number})"
-                )
-
+        numbers = list(self.main_numbers) + list(self.bonus_numbers)
+        if any(number < 1 or number > max_number for number in numbers):
+            raise ValueError(f"number out of range: {numbers}")
         if len(set(self.main_numbers)) != len(self.main_numbers):
-            raise ValueError(f"{lottery_type}: duplicate main numbers")
+            raise ValueError(f"duplicate main numbers: {self.main_numbers}")
+        if len(set(numbers)) != len(numbers):
+            raise ValueError(f"duplicate number detected: {numbers}")
 
-        if len(set(all_numbers)) != len(all_numbers):
-            raise ValueError(f"{lottery_type}: duplicate across main/bonus numbers")
+        datetime.strptime(self.draw_date, "%Y-%m-%d")
 
-    @classmethod
-    def from_values(
-        cls,
-        *,
-        lottery_type: str,
-        draw_no: int,
-        draw_date: date,
-        main_numbers: Sequence[int],
-        bonus_numbers: Sequence[int],
-        source_url: str,
-    ) -> "LotoResult":
-        result = cls(
-            lottery_type=lottery_type.lower(),
-            draw_no=draw_no,
-            draw_date=draw_date,
-            main_numbers=tuple(int(n) for n in main_numbers),
-            bonus_numbers=tuple(int(n) for n in bonus_numbers),
-            source_url=source_url,
-        )
-        result.validate()
-        return result
+    @property
+    def numbers(self) -> list[int]:
+        return list(self.main_numbers)
+
+    @property
+    def bonus(self) -> int | None:
+        return self.bonus_numbers[0] if self.bonus_numbers else None
+
+    @property
+    def bonus1(self) -> int | None:
+        return self.bonus_numbers[0] if len(self.bonus_numbers) >= 1 else None
+
+    @property
+    def bonus2(self) -> int | None:
+        return self.bonus_numbers[1] if len(self.bonus_numbers) >= 2 else None
+
+    def to_row(self) -> dict[str, object]:
+        return {
+            "lottery_type": self.lottery_type.strip().lower(),
+            "draw_no": self.draw_no,
+            "draw_date": self.draw_date,
+            "n1": self.main_numbers[0] if len(self.main_numbers) > 0 else None,
+            "n2": self.main_numbers[1] if len(self.main_numbers) > 1 else None,
+            "n3": self.main_numbers[2] if len(self.main_numbers) > 2 else None,
+            "n4": self.main_numbers[3] if len(self.main_numbers) > 3 else None,
+            "n5": self.main_numbers[4] if len(self.main_numbers) > 4 else None,
+            "n6": self.main_numbers[5] if len(self.main_numbers) > 5 else None,
+            "n7": self.main_numbers[6] if len(self.main_numbers) > 6 else None,
+            "b1": self.bonus_numbers[0] if len(self.bonus_numbers) > 0 else None,
+            "b2": self.bonus_numbers[1] if len(self.bonus_numbers) > 1 else None,
+            "source_url": self.source_url,
+        }

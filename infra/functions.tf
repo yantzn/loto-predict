@@ -24,11 +24,12 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
+      APP_ENV                 = "gcp"
       APP_TIMEZONE            = var.app_timezone
       GCP_PROJECT_ID          = var.project_id
       GCP_REGION              = var.region
       GCS_BUCKET_RAW          = google_storage_bucket.raw_bucket.name
-      BIGQUERY_DATASET        = google_bigquery_dataset.dataset.dataset_id
+      BQ_DATASET              = google_bigquery_dataset.dataset.dataset_id
       BQ_TABLE_EXECUTION_LOGS = google_bigquery_table.execution_logs.table_id
       PUBSUB_IMPORT_TOPIC     = google_pubsub_topic.import_requests.name
       LOG_LEVEL               = var.log_level
@@ -78,8 +79,9 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
+      APP_ENV                   = "gcp"
       APP_TIMEZONE              = var.app_timezone
-      BIGQUERY_DATASET          = google_bigquery_dataset.dataset.dataset_id
+      BQ_DATASET                = google_bigquery_dataset.dataset.dataset_id
       BQ_TABLE_EXECUTION_LOGS   = google_bigquery_table.execution_logs.table_id
       BQ_TABLE_LOTO6_HISTORY    = google_bigquery_table.loto6_history.table_id
       BQ_TABLE_LOTO7_HISTORY    = google_bigquery_table.loto7_history.table_id
@@ -138,8 +140,9 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
+      APP_ENV                  = "gcp"
       APP_TIMEZONE             = var.app_timezone
-      BIGQUERY_DATASET         = google_bigquery_dataset.dataset.dataset_id
+      BQ_DATASET               = google_bigquery_dataset.dataset.dataset_id
       BQ_TABLE_EXECUTION_LOGS  = google_bigquery_table.execution_logs.table_id
       BQ_TABLE_LOTO6_HISTORY   = google_bigquery_table.loto6_history.table_id
       BQ_TABLE_LOTO7_HISTORY   = google_bigquery_table.loto7_history.table_id
@@ -160,7 +163,7 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     }
 
     secret_environment_variables {
-      key        = "LINE_TO_USER_ID"
+      key        = "LINE_USER_ID"
       project_id = var.project_id
       secret     = var.line_user_id_secret_id
       version    = var.line_user_id_secret_version
