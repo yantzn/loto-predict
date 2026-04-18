@@ -84,6 +84,17 @@ generate_prediction_and_notify
 - `LINE_CHANNEL_ACCESS_TOKEN`（gcpのみ必須）
 - `LINE_USER_ID`（gcpのみ必須）
 
+`APP_ENV=local` の場合は、`LINE_CHANNEL_ACCESS_TOKEN` と `LINE_USER_ID` は未設定でも実行できます。
+このとき通知は `NoopLineClient` により dry-run で処理されます。
+
+### 予想ロジックの考え方
+
+- UseCase が履歴を取得し、`statistics.py` で番号ごとの出現頻度スコアを算出します。
+- `prediction.py` ではそのスコアを重みに変換して、重み付きランダム（重複なし）で1口ずつ生成します。
+- 同一実行内で同一組合せは再利用しません（集合比較で重複判定）。
+- 1口内の表示順は「スコア降順・同点は番号昇順」です。
+- 生成要求が組合せ総数を超える場合は `ValueError` を返します。
+
 ### ローカル実行
 
 ```powershell
@@ -116,6 +127,19 @@ Cloud Run Job:
 
 ```powershell
 gcloud run jobs execute backfill-loto-history --region=asia-northeast1 --args="jobs/backfill_loto_history/main.py,--lottery-type,loto7,--start-date,2026-01-01,--end-date,2026-04-01,--output-path,gs://<raw-bucket>/backfill/loto7_20260101_20260401.csv"
+```
+
+### 動作確認コマンド
+
+```powershell
+pytest -q
+python -m compileall functions src jobs tests
+```
+
+ローカルで通知フロー確認（LINE送信はdry-run）:
+
+```powershell
+python -c "from src.usecases.loto_prediction_usecase import generate_and_notify_prediction; print(generate_and_notify_prediction('loto6'))"
 ```
 
 ---
