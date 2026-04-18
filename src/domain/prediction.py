@@ -56,7 +56,13 @@ def _weighted_sample_without_replacement(
         selected.append(chosen)
         available.remove(chosen)
 
-    return sorted(selected)
+    return selected
+
+
+def _order_by_score(selected: list[int], weights: dict[int, float]) -> list[int]:
+    # 抽選は重み付きランダムで多様性を維持しつつ、最終表示はスコア優先で並べる。
+    # 同点時は数値昇順に固定して、表示順の揺れを避ける。
+    return sorted(selected, key=lambda number: (-weights.get(number, 1.0), number))
 
 
 def generate_predictions(
@@ -80,13 +86,14 @@ def generate_predictions(
 
     while len(predictions) < prediction_count and attempts < max_attempts:
         attempts += 1
-        candidate = _weighted_sample_without_replacement(
+        sampled = _weighted_sample_without_replacement(
             population=population,
             weights=weights,
             sample_size=pick_count,
             rng=rng,
         )
-        candidate_key = tuple(candidate)
+        candidate = _order_by_score(sampled, weights)
+        candidate_key = tuple(sorted(candidate))
         if candidate_key in seen_combinations:
             continue
         seen_combinations.add(candidate_key)

@@ -60,7 +60,6 @@ def test_generate_entry_point_builds_line_message(monkeypatch) -> None:
             return False
 
     monkeypatch.setattr(generate_main, "get_settings", lambda: _FakeSettings())
-    monkeypatch.setattr("src.usecases.generate_and_notify.get_settings", lambda: _FakeSettings())
     monkeypatch.setattr(generate_main.bigquery, "Client", lambda project=None: _FakeBigQueryClient(project=project))
     monkeypatch.setattr(generate_main, "create_loto_repository", lambda bq_client=None: fake_repository)
     monkeypatch.setattr(generate_main, "LineClient", lambda token: captured_clients.append(_FakeLineClient(token)) or captured_clients[-1])

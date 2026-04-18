@@ -14,7 +14,20 @@ resource "google_cloud_run_v2_job" "backfill_loto_history" {
       max_retries     = 1
 
       containers {
-        image = "us-docker.pkg.dev/cloudrun/container/job:latest"
+        # このJobは jobs/backfill_loto_history/main.py を実行する専用コンテナを前提とする。
+        # 汎用jobイメージではリポジトリのPythonコードを実行できないため、専用imageを使う。
+        image = var.backfill_job_image
+
+        # 必須引数をTerraformで明示的に渡して、実ジョブとしてそのまま実行可能にする。
+        # 手動実行時は gcloud run jobs execute --args で上書きしやすい構成。
+        command = ["python"]
+        args = [
+          "jobs/backfill_loto_history/main.py",
+          "--lottery-type", var.backfill_default_lottery_type,
+          "--start-date", var.backfill_default_start_date,
+          "--end-date", var.backfill_default_end_date,
+          "--output-path", var.backfill_default_output_path != "" ? var.backfill_default_output_path : "gs://${google_storage_bucket.raw_bucket.name}/backfill/default.csv",
+        ]
 
         env {
           name  = "APP_ENV"

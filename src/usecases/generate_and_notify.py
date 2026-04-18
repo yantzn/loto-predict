@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from src.config.settings import get_settings
 from src.domain.prediction import generate_predictions
 
 
@@ -16,22 +15,25 @@ class GenerateAndNotifyUseCase:
     def execute(
         self,
         lottery_type: str,
+        stats_target_draws: int,
+        prediction_count: int,
+        line_user_id: str,
+        notify_enabled: bool = True,
         execution_id: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         # 何をするか:
         # - 履歴取得 -> 予想生成 -> LINE通知 -> 実行記録保存 を1トランザクションとして扱う。
         # なぜ必要か:
         # - Function層に詳細ロジックを持たせず、再利用可能なユースケースとして責務分離するため。
-        settings = get_settings()
         normalized_lottery_type = str(lottery_type).strip().lower()
         execution_id = execution_id or str(uuid4())
-        stats_target_draws = settings.lottery.stats_target_draws_for(normalized_lottery_type)
-        prediction_count = settings.lottery.prediction_count
 
-        if not settings.line.channel_access_token:
-            raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is required")
-        if not settings.line.user_id:
-            raise ValueError("LINE_USER_ID is required")
+        if prediction_count <= 0:
+            raise ValueError("prediction_count must be greater than 0")
+        if stats_target_draws <= 0:
+            raise ValueError("stats_target_draws must be greater than 0")
+        if notify_enabled and not line_user_id:
+            raise ValueError("line_user_id is required when notify_enabled is True")
 
         history_rows = self._fetch_history_rows(normalized_lottery_type, stats_target_draws)
         if not history_rows:
@@ -45,7 +47,8 @@ class GenerateAndNotifyUseCase:
                 prediction_count=prediction_count,
             )
             message = self._build_message(normalized_lottery_type, stats_target_draws, predictions)
-            self._send_line_message(settings.line.user_id, message)
+            if notify_enabled:
+                self._send_line_message(line_user_id, message)
 
             # 監査・再現性確保のため、成功時は入力条件と出力を保存する。
             run_payload = {
@@ -56,7 +59,7 @@ class GenerateAndNotifyUseCase:
                 "prediction_count": len(predictions),
                 "predictions": predictions,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "status": "SUCCESS",
+                "status": "SUCCESS" if notify_enabled else "DRY_RUN",
                 "latest_draw_no": history_rows[0].get("draw_no"),
             }
             self.repository.save_prediction_run(run_payload)
@@ -103,6 +106,8 @@ class GenerateAndNotifyUseCase:
 
     def _fetch_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, object]]:
         # 新旧repository実装の差分をここで吸収し、上位の処理を単純化する。
+        # 前提: repositoryは draw_no DESC(最新順) で返す。
+        # この前提で history_rows[0] を最新回として実行記録に保存する。
         if hasattr(self.repository, "fetch_recent_history_rows"):
             return list(self.repository.fetch_recent_history_rows(lottery_type, limit))
 

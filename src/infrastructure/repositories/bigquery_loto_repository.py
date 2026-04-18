@@ -42,6 +42,8 @@ class BigQueryLotoRepository:
         }
 
     def fetch_recent_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, Any]]:
+        # 返却順は draw_no DESC(最新順) を契約とする。
+        # local実装も同契約に揃え、UseCaseの解釈を環境非依存にする。
         table_id = self._table_id(lottery_type)
         query = f"""
 SELECT *

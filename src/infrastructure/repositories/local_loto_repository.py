@@ -67,6 +67,8 @@ class LocalLotoRepository:
         }
 
     def fetch_recent_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, Any]]:
+        # BigQuery実装と同じ契約に合わせ、戻り順は常に draw_no DESC(最新順) に揃える。
+        # UseCase側は history_rows[0] を最新回として扱うため、環境差を作らないことが重要。
         path = self._history_path(lottery_type)
         if not path.exists():
             return []
@@ -79,7 +81,8 @@ class LocalLotoRepository:
                     continue
                 rows.append(json.loads(line))
 
-        return rows[-limit:]
+        rows.sort(key=lambda row: int(row.get("draw_no", 0)), reverse=True)
+        return rows[:limit]
 
     def fetch_recent_draws(self, lottery_type: str, limit: int) -> list[list[int]]:
         rows = self.fetch_recent_history_rows(lottery_type, limit)

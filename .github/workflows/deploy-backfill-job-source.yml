@@ -33,6 +33,10 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   JOB_NAME: backfill-loto-history
+  BACKFILL_DEFAULT_LOTTERY_TYPE: ${{ vars.BACKFILL_DEFAULT_LOTTERY_TYPE || 'loto6' }}
+  BACKFILL_DEFAULT_START_DATE: ${{ vars.BACKFILL_DEFAULT_START_DATE || '2026-01-01' }}
+  BACKFILL_DEFAULT_END_DATE: ${{ vars.BACKFILL_DEFAULT_END_DATE || '2026-12-31' }}
+  BACKFILL_DEFAULT_OUTPUT_PATH: ${{ vars.BACKFILL_DEFAULT_OUTPUT_PATH || '' }}
 
 jobs:
   # まずTerraform Infraワークフローの競合を回避
@@ -93,7 +97,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          OUTPUT_PATH="${BACKFILL_DEFAULT_OUTPUT_PATH}"
+          if [[ -z "${OUTPUT_PATH}" ]]; then
+            OUTPUT_PATH="gs://${GCP_PROJECT_ID}-loto-raw/backfill/default.csv"
+          fi
+
           gcloud run jobs deploy "${JOB_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
-            --source=jobs/backfill_loto_history
+            --source=jobs/backfill_loto_history \
+            --command=python \
+            --args="jobs/backfill_loto_history/main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 #
@@ -32,3 +36,14 @@ class LineClient:
         }
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
+
+
+class NoopLineClient:
+    # localプレビュー用の疑似クライアント。
+    # 送信は行わず、メッセージ内容をログに残してフロー確認だけ可能にする。
+    def push_message(self, to_user_id: str, message_text: str) -> None:
+        logger.info(
+            "LINE dry-run: skip push_message. to_user_id=%s message=%s",
+            to_user_id,
+            message_text,
+        )

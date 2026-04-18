@@ -158,3 +158,32 @@ variable "backfill_job_cpu" {
   type        = string
   default     = "1"
 }
+
+variable "backfill_job_image" {
+  description = "Container image for Cloud Run backfill job"
+  type        = string
+}
+
+variable "backfill_default_lottery_type" {
+  description = "Default lottery type used by Cloud Run backfill job"
+  type        = string
+  default     = "loto6"
+}
+
+variable "backfill_default_start_date" {
+  description = "Default start date(YYYY-MM-DD) used by Cloud Run backfill job"
+  type        = string
+  default     = "2026-01-01"
+}
+
+variable "backfill_default_end_date" {
+  description = "Default end date(YYYY-MM-DD) used by Cloud Run backfill job"
+  type        = string
+  default     = "2026-12-31"
+}
+
+variable "backfill_default_output_path" {
+  description = "Default output path used by Cloud Run backfill job. When empty, raw bucket path is generated."
+  type        = string
+  default     = ""
+}

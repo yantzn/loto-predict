@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from src.config.settings import get_settings
-from src.infrastructure.line.line_client import LineClient
+from src.infrastructure.line.line_client import LineClient, NoopLineClient
 from src.infrastructure.repositories.repository_factory import create_loto_repository
 from src.usecases.generate_and_notify import GenerateAndNotifyUseCase
 
@@ -47,9 +47,10 @@ def entry_point(cloud_event):
     if lottery_type not in {"loto6", "loto7"}:
         raise ValueError("lottery_type must be loto6 or loto7")
 
-    if not settings.line.channel_access_token:
+    use_dry_run = settings.is_local
+    if not use_dry_run and not settings.line.channel_access_token:
         raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is required")
-    if not settings.line.user_id:
+    if not use_dry_run and not settings.line.user_id:
         raise ValueError("LINE_USER_ID is required")
 
     stats_target_draws = settings.lottery.stats_target_draws_for(lottery_type)
@@ -65,10 +66,18 @@ def entry_point(cloud_event):
     # localではローカルrepo、gcpではBigQuery repoを使うため、ここでクライアントを切り替える。
     bq_client = None if settings.is_local else bigquery.Client(project=settings.gcp.project_id or None)
     repository = create_loto_repository(bq_client=bq_client)
-    line_client = LineClient(settings.line.channel_access_token)
+    line_client = NoopLineClient() if use_dry_run else LineClient(settings.line.channel_access_token)
     usecase = GenerateAndNotifyUseCase(repository=repository, line_client=line_client, logger=logger)
 
-    result = usecase.execute(lottery_type=lottery_type, execution_id=execution_id)
+    # UseCase層には必要パラメータを明示的に渡し、層間責務を明確化する。
+    result = usecase.execute(
+        lottery_type=lottery_type,
+        stats_target_draws=stats_target_draws,
+        prediction_count=prediction_count,
+        line_user_id=settings.line.user_id,
+        notify_enabled=not use_dry_run,
+        execution_id=execution_id,
+    )
     logger.info(
         "generate_prediction_and_notify completed. execution_id=%s lottery_type=%s history_count=%s prediction_count=%s",
         execution_id,

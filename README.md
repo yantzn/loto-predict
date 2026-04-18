@@ -39,6 +39,87 @@ generate_prediction_and_notify
 
 ---
 
+## 実装整合ガイド（2026-04）
+
+以下は現行実装に合わせた運用上の正しい前提です。
+
+### 各コンポーネントの責務
+
+- `fetch_loto_results`:
+  - 最新当せん結果取得
+  - CSV正規化
+  - GCS保存
+  - importトピック publish
+- `import_loto_results_to_bq`:
+  - GCS CSV読込
+  - CSV行パース
+  - draw_no 重複除外
+  - BigQuery投入
+  - notifyトピック publish
+- `generate_prediction_and_notify`:
+  - Pub/Subデコード・入力検証
+  - repository / LINE client 生成
+  - UseCase呼び出し
+- `GenerateAndNotifyUseCase`:
+  - 履歴取得（最新順）
+  - 予想生成
+  - メッセージ組み立て
+  - LINE送信（localはdry-run）
+  - 実行記録保存
+
+### 必須環境変数
+
+最低限、次を設定してください。
+
+- `APP_ENV` (`local` or `gcp`)
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `BQ_DATASET`
+- `GCS_BUCKET_RAW`
+- `PUBSUB_IMPORT_TOPIC`
+- `PUBSUB_NOTIFY_TOPIC`
+- `HISTORY_LIMIT_LOTO6`
+- `HISTORY_LIMIT_LOTO7`
+- `PREDICTION_COUNT`
+- `LINE_CHANNEL_ACCESS_TOKEN`（gcpのみ必須）
+- `LINE_USER_ID`（gcpのみ必須）
+
+### ローカル実行
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-base.txt
+pip install -r requirements-local.txt
+```
+
+`.env.local.sample` を `.env.local` として配置し、`APP_ENV=local` を設定してください。
+
+- local の `generate_prediction_and_notify` は `NoopLineClient` を使う dry-run で動作します。
+- 実LINE送信は行わず、送信内容をログ出力します。
+
+### Backfill 実行
+
+ローカル:
+
+```powershell
+python jobs/backfill_loto_history/main.py --lottery-type loto6 --start-date 2026-01-01 --end-date 2026-04-01 --output-path ./local_storage/backfill/loto6_20260101_20260401.csv
+```
+
+Cloud Run Job:
+
+- `infra/backfill_job.tf` は backfill 専用コンテナ image を前提に実行します。
+- 必須引数 `--lottery-type --start-date --end-date --output-path` は Terraform 側で `command/args` として設定します。
+- 手動実行時は `gcloud run jobs execute ... --args` で上書き可能です。
+
+例:
+
+```powershell
+gcloud run jobs execute backfill-loto-history --region=asia-northeast1 --args="jobs/backfill_loto_history/main.py,--lottery-type,loto7,--start-date,2026-01-01,--end-date,2026-04-01,--output-path,gs://<raw-bucket>/backfill/loto7_20260101_20260401.csv"
+```
+
+---
+
 ## 特徴
 
 - GCP サーバーレス構成
