@@ -72,10 +72,11 @@ class BigQueryLotoRepository:
             RuntimeError: 挿入失敗時
         """
         table_id = self._table_id(lottery_type)
-        errors = self.bq_client.insert_rows_json(table_id, rows)
-        if errors:
-            raise RuntimeError(f"BigQuery insert failed: {errors}")
-
+        try:
+            self.bq_client.insert_json_rows(table_id, rows)
+        except Exception as e:
+            print(f"BigQuery insert failed: {e}")
+            raise
         return {
             "inserted_rows": len(rows),
             "draw_no": rows[0].get("draw_no") if rows else None,
@@ -124,6 +125,8 @@ LIMIT {int(limit)}
             RuntimeError: 挿入失敗時
         """
         table_id = f"{self.project_id}.{self.dataset}.{self.prediction_runs_table}"
-        errors = self.bq_client.insert_rows_json(table_id, [payload])
-        if errors:
-            raise RuntimeError(f"BigQuery insert prediction run failed: {errors}")
+        try:
+            self.bq_client.insert_json_rows(table_id, [payload])
+        except Exception as e:
+            print(f"BigQuery insert prediction run failed: {e}")
+            raise
