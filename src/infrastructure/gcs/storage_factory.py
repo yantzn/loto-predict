@@ -1,6 +1,6 @@
 from src.config.settings import get_settings
 from src.infrastructure.gcs.gcs_client import GCSClient
-from src.infrastructure.gcs.local_storage_client import LocalStorageClient
+from infrastructure.gcs.local_storage_client import LocalStorageClient
 
 
 

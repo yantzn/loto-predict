@@ -94,7 +94,7 @@ def entry_point(request) -> tuple[str, int, dict[str, str]]:
     Cloud Functionsエントリーポイント。
     GCS/ローカルのCSVをBigQueryに取り込み、完了通知をPub/Subで発行。
     Pub/SubまたはHTTPトリガーで呼ばれる。
-
+    入力値抽出・usecase呼び出し・レスポンス返却のみ担当。
     Args:
         request: Flaskリクエストオブジェクト（GCP Functions標準）
     Returns:

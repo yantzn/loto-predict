@@ -96,7 +96,7 @@ def entry_point(request) -> tuple[str, int, dict[str, str]]:
     Cloud Functionsエントリーポイント。
     楽天ロトから最新結果を取得し、GCS保存・Pub/Sub通知を行う。
     Pub/SubまたはHTTPトリガーで呼ばれる。
-
+    入力値抽出・usecase呼び出し・レスポンス返却のみ担当。
     Args:
         request: Flaskリクエストオブジェクト（GCP Functions標準）
     Returns:

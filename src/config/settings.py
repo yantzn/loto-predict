@@ -1,8 +1,5 @@
 from __future__ import annotations
-
 import os
-
-
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
@@ -121,6 +118,10 @@ def _validate_settings(settings: AppSettings) -> None:
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
+    """
+    環境変数からアプリ全体の設定を取得する。
+    必ずこの関数を通じて設定を取得し、全体で統一すること。
+    """
     settings = AppSettings(
         env=_get_env("APP_ENV", "dev") or "dev",
         timezone=_get_env("APP_TIMEZONE", "Asia/Tokyo") or "Asia/Tokyo",

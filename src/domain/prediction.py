@@ -4,7 +4,7 @@ from __future__ import annotations
 def generate_predictions(
     scored_numbers: list[tuple[int, float]],
     pick_count: int,
-    num_predictions: int = 3,
+    num_predictions: int = 5,
 ) -> list[list[int]]:
     """
     頻度スコア付き番号リストから予想番号を生成する。
