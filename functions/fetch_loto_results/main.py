@@ -20,6 +20,11 @@ from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.rakuten_loto import RakutenLotoClient
 from src.infrastructure.serializer.loto_csv import serialize_results_to_csv
 
+try:
+    from common.execution_log import log_and_write
+except ImportError:
+    from functions.common.execution_log import log_and_write
+
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
@@ -101,58 +106,92 @@ def entry_point(request):
     # 1) 最新結果を取得
     # 2) CSVに正規化して保存
     # 3) import関数へイベント連携
-    settings = get_settings()
-    lottery_type = _extract_lottery_type(request)
-    execution_id = _extract_execution_id(request)
+    execution_id = str(uuid.uuid4())
+    lottery_type: str | None = None
+    try:
+        settings = get_settings()
+        lottery_type = _extract_lottery_type(request)
+        execution_id = _extract_execution_id(request)
 
-    if not settings.is_local and not settings.gcp.raw_bucket_name:
-        raise ValueError("GCS_BUCKET_RAW is required in non-local mode")
+        if not settings.is_local and not settings.gcp.raw_bucket_name:
+            raise ValueError("GCS_BUCKET_RAW is required in non-local mode")
 
-    client = RakutenLotoClient()
-    result = client.fetch_latest_result(lottery_type)
+        client = RakutenLotoClient()
+        result = client.fetch_latest_result(lottery_type)
 
-    # downstream(import)と同じCSV契約に揃えるため、ここで単一レコードでもCSV化する。
-    buffer = StringIO()
-    serialize_results_to_csv([result], buffer)
-    csv_text = buffer.getvalue()
+        # downstream(import)と同じCSV契約に揃えるため、ここで単一レコードでもCSV化する。
+        buffer = StringIO()
+        serialize_results_to_csv([result], buffer)
+        csv_text = buffer.getvalue()
 
-    storage_client = create_storage_client(settings)
-    gcs_bucket = settings.gcp.raw_bucket_name or "local-raw"
-    gcs_object = _build_object_name(lottery_type, result.draw_no, result.draw_date, execution_id)
-    gcs_uri = storage_client.upload_bytes(
-        bucket_name=gcs_bucket,
-        blob_name=gcs_object,
-        payload=csv_text.encode("utf-8"),
-        content_type="text/csv; charset=utf-8",
-    )
+        storage_client = create_storage_client(settings)
+        gcs_bucket = settings.gcp.raw_bucket_name or "local-raw"
+        gcs_object = _build_object_name(lottery_type, result.draw_no, result.draw_date, execution_id)
+        gcs_uri = storage_client.upload_bytes(
+            bucket_name=gcs_bucket,
+            blob_name=gcs_object,
+            payload=csv_text.encode("utf-8"),
+            content_type="text/csv; charset=utf-8",
+        )
 
-    publish_result = _publish_import_message(
-        execution_id=execution_id,
-        lottery_type=lottery_type,
-        gcs_bucket=gcs_bucket,
-        gcs_object=gcs_object,
-        draw_no=result.draw_no,
-        draw_date=result.draw_date,
-    )
+        publish_result = _publish_import_message(
+            execution_id=execution_id,
+            lottery_type=lottery_type,
+            gcs_bucket=gcs_bucket,
+            gcs_object=gcs_object,
+            draw_no=result.draw_no,
+            draw_date=result.draw_date,
+        )
 
-    logger.info(
-        "fetch_loto_results completed. execution_id=%s lottery_type=%s draw_no=%s gcs_bucket=%s gcs_object=%s",
-        execution_id,
-        lottery_type,
-        result.draw_no,
-        gcs_bucket,
-        gcs_object,
-    )
-    return _json_response(
-        {
-            "status": "ok",
-            "execution_id": execution_id,
-            "lottery_type": lottery_type,
-            "draw_no": result.draw_no,
-            "draw_date": result.draw_date,
-            "gcs_bucket": gcs_bucket,
-            "gcs_object": gcs_object,
-            "gcs_uri": gcs_uri,
-            "pubsub_message_id": publish_result,
-        }
-    )
+        log_and_write(
+            execution_id=execution_id,
+            function_name="fetch_loto_results",
+            lottery_type=lottery_type,
+            stage="fetch",
+            status="SUCCESS",
+            # 実行監査では処理件数を残すと障害時の切り分けが速いため、要約を message に含める。
+            message=f"draw_no={result.draw_no} processed_count=1 gcs_object={gcs_object}",
+            gcs_bucket=gcs_bucket,
+            gcs_object=gcs_object,
+            draw_no=result.draw_no,
+        )
+
+        logger.info(
+            "fetch_loto_results completed. execution_id=%s lottery_type=%s draw_no=%s gcs_bucket=%s gcs_object=%s",
+            execution_id,
+            lottery_type,
+            result.draw_no,
+            gcs_bucket,
+            gcs_object,
+        )
+        return _json_response(
+            {
+                "status": "ok",
+                "execution_id": execution_id,
+                "lottery_type": lottery_type,
+                "draw_no": result.draw_no,
+                "draw_date": result.draw_date,
+                "gcs_bucket": gcs_bucket,
+                "gcs_object": gcs_object,
+                "gcs_uri": gcs_uri,
+                "pubsub_message_id": publish_result,
+            }
+        )
+    except Exception as exc:
+        log_and_write(
+            execution_id=execution_id,
+            function_name="fetch_loto_results",
+            lottery_type=lottery_type,
+            stage="fetch",
+            status="FAILED",
+            message="fetch_loto_results failed",
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+        )
+        logger.exception(
+            "fetch_loto_results failed. execution_id=%s lottery_type=%s error_message=%s",
+            execution_id,
+            lottery_type,
+            str(exc),
+        )
+        raise

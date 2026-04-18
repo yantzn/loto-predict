@@ -19,6 +19,11 @@ from src.config.settings import get_settings
 from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.serializer.loto_csv import parse_csv_to_rows
 
+try:
+    from common.execution_log import log_and_write
+except ImportError:
+    from functions.common.execution_log import log_and_write
+
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
@@ -95,67 +100,115 @@ def entry_point(cloud_event):
     # 2) 行データへ復元
     # 3) 重複を除いてBigQuery投入
     # 4) 予想通知関数へイベント連携
-    settings = get_settings()
-    message = _decode_pubsub_message(cloud_event)
-    execution_id = str(message.get("execution_id") or "")
-    lottery_type = str(message["lottery_type"]).strip().lower()
-    gcs_bucket = str(message["gcs_bucket"])
-    gcs_object = str(message["gcs_object"])
+    execution_id = ""
+    lottery_type: str | None = None
+    gcs_bucket: str | None = None
+    gcs_object: str | None = None
+    try:
+        settings = get_settings()
+        message = _decode_pubsub_message(cloud_event)
+        execution_id = str(message.get("execution_id") or "")
+        lottery_type = str(message["lottery_type"]).strip().lower()
+        gcs_bucket = str(message["gcs_bucket"])
+        gcs_object = str(message["gcs_object"])
 
-    storage_client = create_storage_client(settings)
-    csv_text = storage_client.download_text(gcs_bucket, gcs_object)
-    rows = parse_csv_to_rows(StringIO(csv_text))
-    if not rows:
-        raise ValueError("No rows found in CSV")
+        storage_client = create_storage_client(settings)
+        csv_text = storage_client.download_text(gcs_bucket, gcs_object)
+        rows = parse_csv_to_rows(StringIO(csv_text))
+        if not rows:
+            raise ValueError("No rows found in CSV")
 
-    if settings.is_local:
+        if settings.is_local:
+            log_and_write(
+                execution_id=execution_id,
+                function_name="import_loto_results_to_bq",
+                lottery_type=lottery_type,
+                stage="import",
+                status="SUCCESS",
+                # local preview でも監査線を揃えることで、環境差分での調査手順を同一化する。
+                message=f"preview_only processed_count={len(rows)}",
+                gcs_bucket=gcs_bucket,
+                gcs_object=gcs_object,
+            )
+            logger.info(
+                "Local mode import preview only. execution_id=%s lottery_type=%s rows=%s",
+                execution_id,
+                lottery_type,
+                len(rows),
+            )
+            return {
+                "status": "preview",
+                "execution_id": execution_id,
+                "lottery_type": lottery_type,
+                "rows": len(rows),
+            }
+
+        bq_client = bigquery.Client(project=settings.gcp.project_id or None)
+        table_id = f"{settings.gcp.project_id}.{settings.gcp.bigquery_dataset}.{_table_name(lottery_type)}"
+        draw_nos = [row["draw_no"] for row in rows]
+        existing = _existing_draw_nos(bq_client, table_id, draw_nos)
+        # 既存回号を差し引いてからinsertし、再実行時の重複登録を防ぐ。
+        # parse_csv_to_rows() は n1..n7, b1..b2 のBQスキーマ前提で返すため、
+        # ここでは number1 等への再変換を行わず、そのまま履歴テーブルへ投入する。
+        # 列名統一方針は BigQuery schema / repository 側と合わせて別修正で管理する。
+        insert_rows = [row for row in rows if row["draw_no"] not in existing]
+        if insert_rows:
+            errors = bq_client.insert_rows_json(table_id, insert_rows)
+            if errors:
+                raise RuntimeError(f"BigQuery insert failed: {errors}")
+
+        notify_message_id = _publish_notify_message(
+            execution_id=execution_id,
+            lottery_type=lottery_type,
+            draw_no=rows[0]["draw_no"],
+            draw_date=str(rows[0]["draw_date"]),
+        )
+
+        log_and_write(
+            execution_id=execution_id,
+            function_name="import_loto_results_to_bq",
+            lottery_type=lottery_type,
+            stage="import",
+            status="SUCCESS",
+            message=f"processed_count={len(rows)} imported_count={len(insert_rows)} skipped_count={len(existing)}",
+            gcs_bucket=gcs_bucket,
+            gcs_object=gcs_object,
+            draw_no=rows[0]["draw_no"],
+        )
+
         logger.info(
-            "Local mode import preview only. execution_id=%s lottery_type=%s rows=%s",
+            "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s table_id=%s inserted=%s skipped=%s notify_message_id=%s",
             execution_id,
             lottery_type,
-            len(rows),
+            table_id,
+            len(insert_rows),
+            len(existing),
+            notify_message_id,
         )
         return {
-            "status": "preview",
+            "status": "ok",
             "execution_id": execution_id,
             "lottery_type": lottery_type,
-            "rows": len(rows),
+            "inserted_rows": len(insert_rows),
+            "skipped_rows": len(existing),
         }
-
-    bq_client = bigquery.Client(project=settings.gcp.project_id or None)
-    table_id = f"{settings.gcp.project_id}.{settings.gcp.bigquery_dataset}.{_table_name(lottery_type)}"
-    draw_nos = [row["draw_no"] for row in rows]
-    existing = _existing_draw_nos(bq_client, table_id, draw_nos)
-    # 既存回号を差し引いてからinsertし、再実行時の重複登録を防ぐ。
-    # parse_csv_to_rows() は n1..n7, b1..b2 のBQスキーマ前提で返すため、
-    # ここでは number1 等への再変換を行わず、そのまま履歴テーブルへ投入する。
-    # 列名統一方針は BigQuery schema / repository 側と合わせて別修正で管理する。
-    insert_rows = [row for row in rows if row["draw_no"] not in existing]
-    if insert_rows:
-        errors = bq_client.insert_rows_json(table_id, insert_rows)
-        if errors:
-            raise RuntimeError(f"BigQuery insert failed: {errors}")
-
-    notify_message_id = _publish_notify_message(
-        execution_id=execution_id,
-        lottery_type=lottery_type,
-        draw_no=rows[0]["draw_no"],
-        draw_date=str(rows[0]["draw_date"]),
-    )
-
-    logger.info(
-        "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s table_id=%s inserted=%s skipped=%s notify_message_id=%s",
-        execution_id,
-        lottery_type,
-        table_id,
-        len(insert_rows),
-        len(existing),
-        notify_message_id,
-    )
-    return {
-        "status": "ok",
-        "execution_id": execution_id,
-        "lottery_type": lottery_type,
-        "inserted_rows": len(insert_rows),
-        "skipped_rows": len(existing),
-    }
+    except Exception as exc:
+        log_and_write(
+            execution_id=execution_id or "unknown",
+            function_name="import_loto_results_to_bq",
+            lottery_type=lottery_type,
+            stage="import",
+            status="FAILED",
+            message="import_loto_results_to_bq failed",
+            gcs_bucket=gcs_bucket,
+            gcs_object=gcs_object,
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+        )
+        logger.exception(
+            "import_loto_results_to_bq failed. execution_id=%s lottery_type=%s error_message=%s",
+            execution_id,
+            lottery_type,
+            str(exc),
+        )
+        raise

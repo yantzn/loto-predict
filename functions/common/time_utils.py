@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 #
 # アプリケーションで利用するタイムゾーン名（環境変数APP_TIMEZONEで上書き可）
@@ -20,7 +20,11 @@ APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Tokyo")
 # - APP_TIMEZONEで指定したタイムゾーンを常に利用
 #
 def now_local() -> datetime:
-    return datetime.now(ZoneInfo(APP_TIMEZONE))
+    try:
+        return datetime.now(ZoneInfo(APP_TIMEZONE))
+    except ZoneInfoNotFoundError:
+        # tzdata未導入環境でも監査ログを止めないため、JST固定オフセットにフォールバックする。
+        return datetime.now(timezone(timedelta(hours=9)))
 
 
 #

@@ -84,6 +84,8 @@ generate_prediction_and_notify
 - `LINE_CHANNEL_ACCESS_TOKEN`（gcpのみ必須）
 - `LINE_USER_ID`（gcpのみ必須）
 
+`BQ_DATASET` が標準です。`BIGQUERY_DATASET` は互換用途としてのみ扱い、運用設定は `BQ_DATASET` に統一してください。
+
 `APP_ENV=local` の場合は、`LINE_CHANNEL_ACCESS_TOKEN` と `LINE_USER_ID` は未設定でも実行できます。
 このとき通知は `NoopLineClient` により dry-run で処理されます。
 
@@ -347,7 +349,7 @@ Pub/Sub(notify-loto-prediction)
 
 重複防止:
 
-- `run_id = execution_id`
+- `execution_id` 単位で同一実行を追跡
 
 ---
 
@@ -387,10 +389,11 @@ execution_id = 20260405-loto6-001
 
 - `draw_no`
 - `draw_date`
-- `number1 ... number6`
-- `bonus_number`
-- `source_file_name`
-- `ingested_at`
+- `lottery_type`
+- `n1 ... n6`（`n7` は `NULLABLE`）
+- `b1`（`b2` は `NULLABLE`）
+- `source_url`
+- `created_at`
 
 ### loto7_history
 
@@ -400,44 +403,43 @@ execution_id = 20260405-loto6-001
 
 - `draw_no`
 - `draw_date`
-- `number1 ... number7`
-- `bonus_number1`
-- `bonus_number2`
-- `source_file_name`
-- `ingested_at`
+- `lottery_type`
+- `n1 ... n7`
+- `b1`
+- `b2`
+- `source_url`
+- `created_at`
 
 ### prediction_runs
 
-予想生成結果
-
-主なカラム:
-
-- `run_id`
-- `lottery_type`
-- `prediction_numbers`
-- `created_at`
-- `created_date`
-
-### execution_logs
-
-実行ログ
+予想生成結果（1口=1行）
 
 主なカラム:
 
 - `execution_id`
-- `function_name`
+- `lottery_type`
+- `draw_no`
+- `draw_date`
+- `prediction_index`
+- `n1 ... n6`（`n7` は `NULLABLE`）
+- `message_sent`
+- `created_at`
+
+### execution_logs
+
+実行ログ（処理監査）
+
+主なカラム:
+
+- `execution_id`
 - `lottery_type`
 - `stage`
 - `status`
 - `message`
-- `gcs_bucket`
-- `gcs_object`
-- `draw_no`
-- `run_id`
-- `error_type`
 - `error_detail`
-- `executed_at`
-- `executed_date`
+- `created_at`
+
+`prediction_runs` は予想結果の監査、`execution_logs` は fetch/import/generate の SUCCESS/FAILED を含む実行監査に使います。
 
 ---
 
@@ -454,7 +456,7 @@ execution_id = 20260405-loto6-001
 
 以下に該当したら通知をスキップします。
 
-- 同じ `run_id` が `prediction_runs` に存在
+- 同じ `execution_id` の再処理が検知された場合
 
 ---
 
@@ -652,14 +654,13 @@ GitHub Actions:
 ```sql
 SELECT
   execution_id,
-  function_name,
   stage,
   status,
   message,
-  executed_at
+  created_at
 FROM `YOUR_PROJECT.YOUR_DATASET.execution_logs`
 WHERE execution_id = '対象execution_id'
-ORDER BY executed_at ASC
+ORDER BY created_at ASC
 ```
 
 ### Cloud Logging
