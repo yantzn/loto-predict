@@ -24,7 +24,7 @@ def generate_and_notify_prediction(lottery_type: str) -> dict[str, object]:
     usecase = GenerateAndNotifyUseCase(repository=repository, line_client=line_client, logger=logger)
     return usecase.execute(
         lottery_type=lottery_type,
-        stats_target_draws=settings.lottery.stats_target_draws_for(lottery_type),
+        history_limit=settings.lottery.stats_target_draws_for(lottery_type),
         prediction_count=settings.lottery.prediction_count,
         line_user_id=settings.line.user_id or "",
         notify_enabled=not use_dry_run,

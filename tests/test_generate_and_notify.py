@@ -55,7 +55,7 @@ def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> 
 
     result = usecase.execute(
         lottery_type="loto6",
-        stats_target_draws=5,
+        history_limit=5,
         prediction_count=5,
         line_user_id="user-1",
         notify_enabled=True,
@@ -69,6 +69,7 @@ def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> 
     assert "LOTO6 予想" in line_client.messages[0][1]
     payload = repo.saved_payloads[0]
     assert payload["execution_id"] == "exec-1"
+    assert payload["predictions"] == [[1, 2, 3, 4, 5, 6]] * 5
     assert payload["prediction_count"] == 5
     assert payload["status"] == "SUCCESS"
 
@@ -82,7 +83,7 @@ def test_execute_skips_line_send_in_local_dry_run(monkeypatch) -> None:
 
     result = usecase.execute(
         lottery_type="loto6",
-        stats_target_draws=5,
+        history_limit=5,
         prediction_count=5,
         line_user_id="",
         notify_enabled=False,
@@ -94,6 +95,7 @@ def test_execute_skips_line_send_in_local_dry_run(monkeypatch) -> None:
     assert line_client.messages == []
     payload = repo.saved_payloads[0]
     assert payload["execution_id"] == "exec-2"
+    assert payload["predictions"] == [[1, 2, 3, 4, 5, 6]] * 5
     assert payload["prediction_count"] == 5
     assert payload["status"] == "DRY_RUN"
 
@@ -106,7 +108,7 @@ def test_execute_raises_for_no_history() -> None:
     with pytest.raises(ValueError, match="no history found"):
         usecase.execute(
             lottery_type="loto6",
-            stats_target_draws=5,
+            history_limit=5,
             prediction_count=5,
             line_user_id="user-1",
             notify_enabled=True,
@@ -123,7 +125,7 @@ def test_execute_raises_for_invalid_prediction_count() -> None:
     with pytest.raises(ValueError, match="prediction_count"):
         usecase.execute(
             lottery_type="loto6",
-            stats_target_draws=5,
+            history_limit=5,
             prediction_count=0,
             line_user_id="user-1",
             notify_enabled=True,
@@ -132,15 +134,15 @@ def test_execute_raises_for_invalid_prediction_count() -> None:
     assert repo.saved_payloads == []
 
 
-def test_execute_raises_for_invalid_stats_target_draws() -> None:
+def test_execute_raises_for_invalid_history_limit() -> None:
     repo = _FakeRepository(_history_rows_loto6())
     line_client = _FakeLineClient()
     usecase = GenerateAndNotifyUseCase(repository=repo, line_client=line_client, logger=logging.getLogger(__name__))
 
-    with pytest.raises(ValueError, match="stats_target_draws"):
+    with pytest.raises(ValueError, match="history_limit"):
         usecase.execute(
             lottery_type="loto6",
-            stats_target_draws=0,
+            history_limit=0,
             prediction_count=5,
             line_user_id="user-1",
             notify_enabled=True,

@@ -51,15 +51,15 @@ def entry_point(cloud_event):
     if not use_dry_run:
         require_line_settings(settings)
 
-    # stats_target_draws: 統計算出に使う履歴件数。
+    # history_limit: 統計算出に使う履歴件数。
     # prediction_count: 生成する予想口数。
-    stats_target_draws = settings.lottery.stats_target_draws_for(lottery_type)
+    history_limit = settings.lottery.stats_target_draws_for(lottery_type)
     prediction_count = settings.lottery.prediction_count
     logger.info(
-        "generate_prediction_and_notify start. execution_id=%s lottery_type=%s stats_target_draws=%s prediction_count=%s",
+        "generate_prediction_and_notify start. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
         execution_id,
         lottery_type,
-        stats_target_draws,
+        history_limit,
         prediction_count,
     )
 
@@ -74,7 +74,7 @@ def entry_point(cloud_event):
     # BigQuery schema 変換や保存形式の詳細は repository 層へ委譲する。
     result = usecase.execute(
         lottery_type=lottery_type,
-        stats_target_draws=stats_target_draws,
+        history_limit=history_limit,
         prediction_count=prediction_count,
         line_user_id=settings.line.user_id or "",
         notify_enabled=not use_dry_run,

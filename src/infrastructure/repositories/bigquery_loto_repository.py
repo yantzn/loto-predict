@@ -49,7 +49,8 @@ class BigQueryLotoRepository:
 
     def fetch_recent_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, Any]]:
         # 返却順は draw_no DESC(最新順) を契約とする。
-        # local実装も同契約に揃え、UseCaseの解釈を環境非依存にする。
+        # local実装は dict を返すため、BigQuery Row との差をここで吸収して
+        # UseCase 側は常に row.get(...) で同じように扱えるようにする。
         table_id = self._table_id(lottery_type)
         query = f"""
 SELECT *
@@ -57,8 +58,7 @@ FROM `{table_id}`
 ORDER BY draw_no DESC
 LIMIT {int(limit)}
 """
-        # UseCase 側は list[dict-like] を前提に扱うため、iterator ではなく result() を明示する。
-        return list(self.bq_client.query(query).result())
+        return [dict(row.items()) for row in self.bq_client.query(query).result()]
 
     def fetch_recent_draws(self, lottery_type: str, limit: int) -> list[list[int]]:
         # 履歴テーブルの n1..n7 カラムから、統計計算用の draw 配列へ変換する。

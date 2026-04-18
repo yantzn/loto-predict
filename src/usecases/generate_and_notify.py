@@ -16,7 +16,7 @@ class GenerateAndNotifyUseCase:
     def execute(
         self,
         lottery_type: str,
-        stats_target_draws: int,
+        history_limit: int,
         prediction_count: int,
         line_user_id: str,
         notify_enabled: bool = True,
@@ -29,6 +29,8 @@ class GenerateAndNotifyUseCase:
         # - prediction_runs は「1実行=1行」ではなく「1口=1行」へ展開して保存する前提のため、
         #   UseCase は保存に必要な最小ペイロードを組み立てるだけに留める。
         # - payload の最終的な BigQuery schema 変換責務は repository 側にある。
+        # - 設定名(HISTORY_LIMIT_*) と外部I/F用語を合わせ、history_limit に統一することで
+        #   実装・設定・テスト間の理解コストを下げる。
         normalized_lottery_type = str(lottery_type).strip().lower()
         if normalized_lottery_type not in {"loto6", "loto7"}:
             raise ValueError("lottery_type must be loto6 or loto7")
@@ -37,12 +39,12 @@ class GenerateAndNotifyUseCase:
 
         if prediction_count <= 0:
             raise ValueError("prediction_count must be greater than 0")
-        if stats_target_draws <= 0:
-            raise ValueError("stats_target_draws must be greater than 0")
+        if history_limit <= 0:
+            raise ValueError("history_limit must be greater than 0")
         if notify_enabled and not line_user_id:
             raise ValueError("line_user_id is required when notify_enabled is True")
 
-        history_rows = self._fetch_history_rows(normalized_lottery_type, stats_target_draws)
+        history_rows = self._fetch_history_rows(normalized_lottery_type, history_limit)
         if not history_rows:
             raise ValueError(f"no history found for {normalized_lottery_type}")
 
@@ -69,7 +71,7 @@ class GenerateAndNotifyUseCase:
             run_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
-                "history_limit": stats_target_draws,
+                "history_limit": history_limit,
                 "history_count": len(history_rows),
                 "prediction_count": len(predictions),
                 "predictions": predictions,
@@ -80,10 +82,10 @@ class GenerateAndNotifyUseCase:
             self.repository.save_prediction_run(run_payload)
 
             self.logger.info(
-                "Generated and notified. execution_id=%s lottery_type=%s stats_target_draws=%s prediction_count=%s",
+                "Generated and notified. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
                 execution_id,
                 normalized_lottery_type,
-                stats_target_draws,
+                history_limit,
                 len(predictions),
             )
             return {
@@ -102,7 +104,7 @@ class GenerateAndNotifyUseCase:
             failure_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
-                "history_limit": stats_target_draws,
+                "history_limit": history_limit,
                 "history_count": len(history_rows),
                 "prediction_count": prediction_count,
                 "predictions": [],
@@ -123,9 +125,11 @@ class GenerateAndNotifyUseCase:
                 )
 
             self.logger.exception(
-                "Failed to generate or notify predictions. execution_id=%s lottery_type=%s",
+                "Failed to generate or notify predictions. execution_id=%s lottery_type=%s latest_draw_no=%s error_message=%s",
                 execution_id,
                 normalized_lottery_type,
+                history_rows[0].get("draw_no"),
+                str(exc),
             )
             raise
 
