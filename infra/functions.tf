@@ -79,6 +79,8 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     service_account_email = var.functions_runtime_service_account_email
 
     environment_variables = {
+      # import は history テーブルへ直接投入する前提。
+      # ここで渡すテーブル名は generate 側・repository 側と一致させること。
       APP_ENV                   = "gcp"
       APP_TIMEZONE              = var.app_timezone
       BQ_DATASET                = google_bigquery_dataset.dataset.dataset_id
@@ -156,6 +158,7 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     }
 
     secret_environment_variables {
+      # settings.py が読む env 名と key 名は厳密一致が必須。
       key        = "LINE_CHANNEL_ACCESS_TOKEN"
       project_id = var.project_id
       secret     = var.line_channel_access_token_secret_id
@@ -163,6 +166,7 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
     }
 
     secret_environment_variables {
+      # LINE_USER_ID 名が一致しないと本番で通知先解決に失敗し、Push 通知できない。
       key        = "LINE_USER_ID"
       project_id = var.project_id
       secret     = var.line_user_id_secret_id

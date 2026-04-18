@@ -26,6 +26,8 @@ class GenerateAndNotifyUseCase:
         # - 履歴取得 -> 予想生成 -> LINE通知 -> 実行記録保存 を1トランザクションとして扱う。
         # なぜ必要か:
         # - Function層に詳細ロジックを持たせず、再利用可能なユースケースとして責務分離するため。
+        # - prediction_runs は「1実行=1行」ではなく「1口=1行」へ展開して保存する前提のため、
+        #   UseCase は保存に必要な最小ペイロードを組み立てるだけに留める。
         normalized_lottery_type = str(lottery_type).strip().lower()
         if normalized_lottery_type not in {"loto6", "loto7"}:
             raise ValueError("lottery_type must be loto6 or loto7")
@@ -58,6 +60,7 @@ class GenerateAndNotifyUseCase:
                 self._send_line_message(line_user_id, message)
 
             # 監査・再現性確保のため、成功時は入力条件と出力を保存する。
+            # repository 側で predictions を 1口ずつへ展開して prediction_runs スキーマへ保存する。
             run_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
@@ -86,7 +89,9 @@ class GenerateAndNotifyUseCase:
                 "message": message,
             }
         except Exception as exc:
-            # 失敗時も記録を残し、運用時に「どこで失敗したか」を追跡可能にする。
+            # 失敗時の監査は execution_logs 側を主に使う前提。
+            # prediction_runs は n1..n6 必須で空予想を保存できないため、
+            # predictions が空の場合は保存をスキップする。
             failure_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
@@ -99,10 +104,16 @@ class GenerateAndNotifyUseCase:
                 "error_message": str(exc),
                 "latest_draw_no": history_rows[0].get("draw_no"),
             }
-            try:
-                self.repository.save_prediction_run(failure_payload)
-            except Exception:
-                self.logger.exception("Failed to persist failed prediction run. execution_id=%s", execution_id)
+            if failure_payload["predictions"]:
+                try:
+                    self.repository.save_prediction_run(failure_payload)
+                except Exception:
+                    self.logger.exception("Failed to persist failed prediction run. execution_id=%s", execution_id)
+            else:
+                self.logger.warning(
+                    "Skip save_prediction_run for failed execution because predictions is empty. execution_id=%s",
+                    execution_id,
+                )
 
             self.logger.exception(
                 "Failed to generate or notify predictions. execution_id=%s lottery_type=%s",

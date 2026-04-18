@@ -17,24 +17,16 @@ resource "google_bigquery_table" "loto6_history" {
   table_id            = local.table_ids.loto6_history
   deletion_protection = false
 
+  # history テーブルは generate_prediction_and_notify の元データ。
+  # import 処理と repository が同じ n1..n7, b1..b2 形式を参照する。
   time_partitioning {
     type  = "DAY"
     field = "draw_date"
   }
 
-  schema = jsonencode([
-    { name = "draw_no", type = "INTEGER", mode = "REQUIRED" },
-    { name = "draw_date", type = "DATE", mode = "REQUIRED" },
-    { name = "number1", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number2", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number3", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number4", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number5", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number6", type = "INTEGER", mode = "REQUIRED" },
-    { name = "bonus_number", type = "INTEGER", mode = "NULLABLE" },
-    { name = "source_file_name", type = "STRING", mode = "NULLABLE" },
-    { name = "ingested_at", type = "TIMESTAMP", mode = "NULLABLE" }
-  ])
+  clustering = ["draw_no"]
+
+  schema = file("${path.module}/schemas/loto6_results.json")
 }
 
 resource "google_bigquery_table" "loto7_history" {
@@ -43,44 +35,16 @@ resource "google_bigquery_table" "loto7_history" {
   table_id            = local.table_ids.loto7_history
   deletion_protection = false
 
+  # history テーブルは generate_prediction_and_notify の元データ。
+  # import 処理と repository が同じ n1..n7, b1..b2 形式を参照する。
   time_partitioning {
     type  = "DAY"
     field = "draw_date"
   }
 
-  schema = jsonencode([
-    { name = "draw_no", type = "INTEGER", mode = "REQUIRED" },
-    { name = "draw_date", type = "DATE", mode = "REQUIRED" },
-    { name = "number1", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number2", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number3", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number4", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number5", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number6", type = "INTEGER", mode = "REQUIRED" },
-    { name = "number7", type = "INTEGER", mode = "REQUIRED" },
-    { name = "bonus_number1", type = "INTEGER", mode = "NULLABLE" },
-    { name = "bonus_number2", type = "INTEGER", mode = "NULLABLE" },
-    { name = "source_file_name", type = "STRING", mode = "NULLABLE" },
-    { name = "ingested_at", type = "TIMESTAMP", mode = "NULLABLE" }
-  ])
-}
+  clustering = ["draw_no"]
 
-resource "google_bigquery_table" "loto6_validation_stage" {
-  project             = var.project_id
-  dataset_id          = google_bigquery_dataset.dataset.dataset_id
-  table_id            = local.table_ids.loto6_validation_stage
-  deletion_protection = false
-
-  schema = google_bigquery_table.loto6_history.schema
-}
-
-resource "google_bigquery_table" "loto7_validation_stage" {
-  project             = var.project_id
-  dataset_id          = google_bigquery_dataset.dataset.dataset_id
-  table_id            = local.table_ids.loto7_validation_stage
-  deletion_protection = false
-
-  schema = google_bigquery_table.loto7_history.schema
+  schema = file("${path.module}/schemas/loto7_results.json")
 }
 
 resource "google_bigquery_table" "prediction_runs" {
@@ -89,18 +53,16 @@ resource "google_bigquery_table" "prediction_runs" {
   table_id            = local.table_ids.prediction_runs
   deletion_protection = false
 
+  # prediction_runs は通知した予想の監査テーブル。
+  # repository.save_prediction_run() 側で「1口=1行」に展開して保存する。
   time_partitioning {
     type  = "DAY"
-    field = "created_date"
+    field = "created_at"
   }
 
-  schema = jsonencode([
-    { name = "run_id", type = "STRING", mode = "REQUIRED" },
-    { name = "lottery_type", type = "STRING", mode = "REQUIRED" },
-    { name = "prediction_numbers", type = "STRING", mode = "REQUIRED" },
-    { name = "created_at", type = "TIMESTAMP", mode = "REQUIRED" },
-    { name = "created_date", type = "DATE", mode = "REQUIRED" }
-  ])
+  clustering = ["execution_id", "draw_no"]
+
+  schema = file("${path.module}/schemas/prediction_runs.json")
 }
 
 resource "google_bigquery_table" "execution_logs" {
@@ -111,6 +73,8 @@ resource "google_bigquery_table" "execution_logs" {
 
   deletion_protection = false
 
+  # execution_logs は Cloud Functions 実行ログ用途。
+  # prediction_runs で保持しない失敗監査情報はこのテーブルで追跡する。
   schema = jsonencode([
     { name = "execution_id", type = "STRING", mode = "REQUIRED" },
     { name = "function_name", type = "STRING", mode = "REQUIRED" },

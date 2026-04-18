@@ -35,12 +35,13 @@ def _decode_pubsub_message(cloud_event) -> dict[str, object]:
 
 
 def _table_name(lottery_type: str) -> str:
-    # ロト種別ごとにBigQueryテーブルが分かれるため、マッピングを明示する。
+    # 予想処理(Repository)と同じ履歴テーブルへ投入し、
+    # import と prediction が同一データソースを参照するように揃える。
     normalized = str(lottery_type).strip().lower()
     if normalized == "loto6":
-        return "loto6_results"
+        return "loto6_history"
     if normalized == "loto7":
-        return "loto7_results"
+        return "loto7_history"
     raise ValueError(f"unsupported lottery_type: {lottery_type}")
 
 
@@ -125,6 +126,8 @@ def entry_point(cloud_event):
     draw_nos = [row["draw_no"] for row in rows]
     existing = _existing_draw_nos(bq_client, table_id, draw_nos)
     # 既存回号を差し引いてからinsertし、再実行時の重複登録を防ぐ。
+    # parse_csv_to_rows() は n1..n7, b1..b2 のBQスキーマ前提で返すため、
+    # ここでは number1 等への再変換を行わず、そのまま履歴テーブルへ投入する。
     insert_rows = [row for row in rows if row["draw_no"] not in existing]
     if insert_rows:
         errors = bq_client.insert_rows_json(table_id, insert_rows)

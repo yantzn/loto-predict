@@ -45,6 +45,8 @@ def _fake_predictions(*, number_scores, lottery_type, prediction_count, rng=None
 
 
 def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> None:
+    # このテストは UseCase のオーケストレーション責務を検証する。
+    # prediction_runs のスキーマ変換詳細(1口1行への展開)は repository 側テストで担保する。
     repo = _FakeRepository(_history_rows_loto6())
     line_client = _FakeLineClient()
     usecase = GenerateAndNotifyUseCase(repository=repo, line_client=line_client, logger=logging.getLogger(__name__))
@@ -65,8 +67,13 @@ def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> 
     assert len(line_client.messages) == 1
     assert line_client.messages[0][0] == "user-1"
     assert "LOTO6 予想" in line_client.messages[0][1]
-    assert repo.saved_payloads[0]["execution_id"] == "exec-1"
-    assert repo.saved_payloads[0]["status"] == "SUCCESS"
+    payload = repo.saved_payloads[0]
+    assert payload["execution_id"] == "exec-1"
+    assert payload["lottery_type"] == "loto6"
+    assert payload["history_limit"] == 5
+    assert payload["prediction_count"] == 5
+    assert payload["status"] == "SUCCESS"
+    assert payload["predictions"] == [[1, 2, 3, 4, 5, 6]] * 5
 
 
 def test_execute_skips_line_send_in_local_dry_run(monkeypatch) -> None:
@@ -88,7 +95,13 @@ def test_execute_skips_line_send_in_local_dry_run(monkeypatch) -> None:
     assert repo.fetch_calls == [("loto6", 5)]
     assert result["prediction_count"] == 5
     assert line_client.messages == []
-    assert repo.saved_payloads[0]["status"] == "DRY_RUN"
+    payload = repo.saved_payloads[0]
+    assert payload["execution_id"] == "exec-2"
+    assert payload["lottery_type"] == "loto6"
+    assert payload["history_limit"] == 5
+    assert payload["prediction_count"] == 5
+    assert payload["status"] == "DRY_RUN"
+    assert payload["predictions"] == [[1, 2, 3, 4, 5, 6]] * 5
 
 
 def test_execute_raises_for_no_history() -> None:
@@ -105,6 +118,7 @@ def test_execute_raises_for_no_history() -> None:
             notify_enabled=True,
             execution_id="exec-3",
         )
+    assert repo.saved_payloads == []
 
 
 def test_execute_raises_for_invalid_prediction_count() -> None:
@@ -121,6 +135,7 @@ def test_execute_raises_for_invalid_prediction_count() -> None:
             notify_enabled=True,
             execution_id="exec-4",
         )
+    assert repo.saved_payloads == []
 
 
 def test_execute_raises_for_invalid_history_limit() -> None:
@@ -137,3 +152,4 @@ def test_execute_raises_for_invalid_history_limit() -> None:
             notify_enabled=True,
             execution_id="exec-5",
         )
+    assert repo.saved_payloads == []

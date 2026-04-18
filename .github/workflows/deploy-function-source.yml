@@ -1,7 +1,8 @@
 name: Deploy GCP Cloud Functions Source # Cloud Functionsデプロイ用ワークフロー
 
 on:
-  # mainブランチへのpushや手動実行で発火
+  # source object 更新ワークフロー。
+  # Cloud Functions Gen2 本体の更新(apply/rollout)は Terraform workflow 側で実施する。
   push:
     branches:
       - main
@@ -37,7 +38,7 @@ env:
   NOTIFY_OBJECT: functions/generate_prediction_and_notify/function-source.zip
 
 jobs:
-  # まずTerraform Infraワークフローの競合を回避
+  # Terraform apply と同時に source object を更新しないための待機ジョブ。
   wait-for-terraform:
     # 他のTerraform Infraワークフローが終わるまで待機
     runs-on: ubuntu-latest
@@ -57,8 +58,9 @@ jobs:
           echo "Checking Terraform Infra runs on branch=${BRANCH}"
           python .github/scripts/terraform_infra_wait.py
 
-  package-and-deploy:
-    # Cloud Functionsのパッケージング・デプロイ本体
+  package-and-upload:
+    # このworkflowの責務は source zip の作成と GCS object 更新まで。
+    # Cloud Functions リソースの実更新は terraform-infra workflow へ委譲する。
     needs: wait-for-terraform
     runs-on: ubuntu-latest
 
@@ -112,52 +114,3 @@ jobs:
           gcloud storage cp dist/fetch_loto_results.zip gs://${SOURCE_BUCKET_NAME}/${FETCH_OBJECT}
           gcloud storage cp dist/import_loto_results_to_bq.zip gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
           gcloud storage cp dist/generate_prediction_and_notify.zip gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}
-
-      - name: Prepare deploy sources # zip展開
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .deploy
-          mkdir -p .deploy/fetch .deploy/import .deploy/notify
-          unzip -q dist/fetch_loto_results.zip -d .deploy/fetch
-          unzip -q dist/import_loto_results_to_bq.zip -d .deploy/import
-          unzip -q dist/generate_prediction_and_notify.zip -d .deploy/notify
-
-      - name: Redeploy fetch-loto-results # 関数デプロイ
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud functions deploy fetch-loto-results \
-            --gen2 \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --runtime=python312 \
-            --entry-point=entry_point \
-            --source=.deploy/fetch \
-            --trigger-http
-
-      - name: Redeploy import-loto-results-to-bq # 関数デプロイ
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud functions deploy import-loto-results-to-bq \
-            --gen2 \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --runtime=python312 \
-            --entry-point=entry_point \
-            --source=.deploy/import \
-            --trigger-http
-
-      - name: Redeploy generate-prediction-and-notify # 関数デプロイ
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud functions deploy generate-prediction-and-notify \
-            --gen2 \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --runtime=python312 \
-            --entry-point=entry_point \
-            --source=.deploy/notify \
-            --trigger-http
