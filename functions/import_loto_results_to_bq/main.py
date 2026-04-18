@@ -20,9 +20,9 @@ from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.serializer.loto_csv import parse_csv_to_rows
 
 try:
-    from common.execution_log import log_and_write
+    from common.execution_log import write_execution_log
 except ImportError:
-    from functions.common.execution_log import log_and_write
+    from functions.common.execution_log import write_execution_log
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ def entry_point(cloud_event):
             raise ValueError("No rows found in CSV")
 
         if settings.is_local:
-            log_and_write(
+            write_execution_log(
                 execution_id=execution_id,
                 function_name="import_loto_results_to_bq",
                 lottery_type=lottery_type,
@@ -164,7 +164,7 @@ def entry_point(cloud_event):
             draw_date=str(rows[0]["draw_date"]),
         )
 
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id,
             function_name="import_loto_results_to_bq",
             lottery_type=lottery_type,
@@ -193,7 +193,7 @@ def entry_point(cloud_event):
             "skipped_rows": len(existing),
         }
     except Exception as exc:
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id or "unknown",
             function_name="import_loto_results_to_bq",
             lottery_type=lottery_type,

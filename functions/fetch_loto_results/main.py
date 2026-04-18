@@ -21,9 +21,9 @@ from src.infrastructure.rakuten_loto import RakutenLotoClient
 from src.infrastructure.serializer.loto_csv import serialize_results_to_csv
 
 try:
-    from common.execution_log import log_and_write
+    from common.execution_log import write_execution_log
 except ImportError:
-    from functions.common.execution_log import log_and_write
+    from functions.common.execution_log import write_execution_log
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ def entry_point(request):
             draw_date=result.draw_date,
         )
 
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id,
             function_name="fetch_loto_results",
             lottery_type=lottery_type,
@@ -178,7 +178,7 @@ def entry_point(request):
             }
         )
     except Exception as exc:
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id,
             function_name="fetch_loto_results",
             lottery_type=lottery_type,

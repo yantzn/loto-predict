@@ -21,9 +21,9 @@ from src.infrastructure.repositories.repository_factory import create_loto_repos
 from src.usecases.generate_and_notify import GenerateAndNotifyUseCase
 
 try:
-    from common.execution_log import log_and_write
+    from common.execution_log import write_execution_log
 except ImportError:
-    from functions.common.execution_log import log_and_write
+    from functions.common.execution_log import write_execution_log
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def entry_point(cloud_event):
             execution_id=execution_id,
         )
 
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id,
             function_name="generate_prediction_and_notify",
             lottery_type=lottery_type,
@@ -114,7 +114,7 @@ def entry_point(cloud_event):
         return result
     except Exception as exc:
         # FAILED時は prediction_runs を増やさず、execution_logs 側へ監査を寄せる。
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id,
             function_name="generate_prediction_and_notify",
             lottery_type=lottery_type,
