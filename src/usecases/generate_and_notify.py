@@ -16,7 +16,7 @@ class GenerateAndNotifyUseCase:
     def execute(
         self,
         lottery_type: str,
-        history_limit: int,
+        stats_target_draws: int,
         prediction_count: int,
         line_user_id: str,
         notify_enabled: bool = True,
@@ -28,6 +28,7 @@ class GenerateAndNotifyUseCase:
         # - Function層に詳細ロジックを持たせず、再利用可能なユースケースとして責務分離するため。
         # - prediction_runs は「1実行=1行」ではなく「1口=1行」へ展開して保存する前提のため、
         #   UseCase は保存に必要な最小ペイロードを組み立てるだけに留める。
+        # - payload の最終的な BigQuery schema 変換責務は repository 側にある。
         normalized_lottery_type = str(lottery_type).strip().lower()
         if normalized_lottery_type not in {"loto6", "loto7"}:
             raise ValueError("lottery_type must be loto6 or loto7")
@@ -36,12 +37,12 @@ class GenerateAndNotifyUseCase:
 
         if prediction_count <= 0:
             raise ValueError("prediction_count must be greater than 0")
-        if history_limit <= 0:
-            raise ValueError("history_limit must be greater than 0")
+        if stats_target_draws <= 0:
+            raise ValueError("stats_target_draws must be greater than 0")
         if notify_enabled and not line_user_id:
             raise ValueError("line_user_id is required when notify_enabled is True")
 
-        history_rows = self._fetch_history_rows(normalized_lottery_type, history_limit)
+        history_rows = self._fetch_history_rows(normalized_lottery_type, stats_target_draws)
         if not history_rows:
             raise ValueError(f"no history found for {normalized_lottery_type}")
 
@@ -60,11 +61,15 @@ class GenerateAndNotifyUseCase:
                 self._send_line_message(line_user_id, message)
 
             # 監査・再現性確保のため、成功時は入力条件と出力を保存する。
-            # repository 側で predictions を 1口ずつへ展開して prediction_runs スキーマへ保存する。
+            # この payload は repository 側で prediction_runs スキーマへ変換される前提。
+            # UseCase は保存形式の最終責任を持たないが、キー名は repository 期待値に揃える。
+            # 方針:
+            # - SUCCESS は prediction_runs へ保存する
+            # - DRY_RUN も予想結果監査のため prediction_runs へ保存する
             run_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
-                "history_limit": history_limit,
+                "history_limit": stats_target_draws,
                 "history_count": len(history_rows),
                 "prediction_count": len(predictions),
                 "predictions": predictions,
@@ -75,10 +80,10 @@ class GenerateAndNotifyUseCase:
             self.repository.save_prediction_run(run_payload)
 
             self.logger.info(
-                "Generated and notified. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
+                "Generated and notified. execution_id=%s lottery_type=%s stats_target_draws=%s prediction_count=%s",
                 execution_id,
                 normalized_lottery_type,
-                history_limit,
+                stats_target_draws,
                 len(predictions),
             )
             return {
@@ -90,12 +95,14 @@ class GenerateAndNotifyUseCase:
             }
         except Exception as exc:
             # 失敗時の監査は execution_logs 側を主に使う前提。
+            # 方針:
+            # - FAILED は原則 prediction_runs 保存をスキップする
             # prediction_runs は n1..n6 必須で空予想を保存できないため、
             # predictions が空の場合は保存をスキップする。
             failure_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
-                "history_limit": history_limit,
+                "history_limit": stats_target_draws,
                 "history_count": len(history_rows),
                 "prediction_count": prediction_count,
                 "predictions": [],

@@ -8,10 +8,12 @@ from src.infrastructure.repositories.local_loto_repository import LocalLotoRepos
 def create_loto_repository(bq_client=None):
     settings = get_settings()
 
-    # import 関数と generate 関数は、同じ history テーブルを参照する前提。
-    # 既定値は Terraform / settings と揃え、loto6_history / loto7_history を使う。
+    # 本リポジトリは、予想生成(generate)の参照元として history テーブルを前提にする。
+    # import 処理も同じ history テーブルへ投入することで、取り込みデータを即座に参照できる。
+    # 既定値は Terraform / settings / README と揃え、loto6_history / loto7_history を使う。
     # もし別名テーブルへ投入したい場合は、import_loto_results_to_bq 側の投入先も
     # 同時に変更しないと、取り込み先と参照先が分離して不整合になる。
+    # その場合は Terraform 定義と README 記載も同時に更新して運用前提を一致させること。
     table_loto6 = settings.gcp.table_loto6_history
     table_loto7 = settings.gcp.table_loto7_history
     prediction_runs_table = settings.gcp.table_prediction_runs

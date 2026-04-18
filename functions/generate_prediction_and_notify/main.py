@@ -51,26 +51,30 @@ def entry_point(cloud_event):
     if not use_dry_run:
         require_line_settings(settings)
 
-    history_limit = settings.lottery.stats_target_draws_for(lottery_type)
+    # stats_target_draws: 統計算出に使う履歴件数。
+    # prediction_count: 生成する予想口数。
+    stats_target_draws = settings.lottery.stats_target_draws_for(lottery_type)
     prediction_count = settings.lottery.prediction_count
     logger.info(
-        "generate_prediction_and_notify start. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
+        "generate_prediction_and_notify start. execution_id=%s lottery_type=%s stats_target_draws=%s prediction_count=%s",
         execution_id,
         lottery_type,
-        history_limit,
+        stats_target_draws,
         prediction_count,
     )
 
     # localではローカルrepo、gcpではBigQuery repoを使うため、ここでクライアントを切り替える。
+    # repository は history テーブル(loto6_history/loto7_history)を参照する前提。
     bq_client = None if settings.is_local else bigquery.Client(project=settings.gcp.project_id or None)
     repository = create_loto_repository(bq_client=bq_client)
     line_client = NoopLineClient() if use_dry_run else LineClient(settings.line.channel_access_token)
     usecase = GenerateAndNotifyUseCase(repository=repository, line_client=line_client, logger=logger)
 
-    # UseCase層には必要パラメータを明示的に渡し、層間責務を明確化する。
+    # entry point 層は入力解析・依存生成・usecase呼び出しに専念し、
+    # BigQuery schema 変換や保存形式の詳細は repository 層へ委譲する。
     result = usecase.execute(
         lottery_type=lottery_type,
-        history_limit=history_limit,
+        stats_target_draws=stats_target_draws,
         prediction_count=prediction_count,
         line_user_id=settings.line.user_id or "",
         notify_enabled=not use_dry_run,

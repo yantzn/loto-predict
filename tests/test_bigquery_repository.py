@@ -62,6 +62,9 @@ def test_save_prediction_run_expands_loto6_predictions_to_multiple_rows() -> Non
     assert len(rows) == 2
     assert rows[0]["prediction_index"] == 1
     assert rows[1]["prediction_index"] == 2
+    assert rows[0]["execution_id"] == "exec-1"
+    assert rows[1]["execution_id"] == "exec-1"
+    assert rows[0]["draw_no"] == 1234
     assert rows[0]["n1"] == 1
     assert rows[1]["n6"] == 12
     assert rows[0]["n7"] is None
@@ -84,7 +87,10 @@ def test_save_prediction_run_sets_n7_for_loto7() -> None:
     )
 
     _, rows = client.insert_calls[0]
+    assert rows[0]["execution_id"] == "exec-2"
+    assert rows[0]["draw_no"] == 567
     assert rows[0]["n7"] == 7
+    # DRY_RUN は status!=SUCCESS のため message_sent=False へ変換される。
     assert rows[0]["message_sent"] is False
 
 

@@ -37,7 +37,9 @@ class BigQueryLotoRepository:
     def import_rows(self, lottery_type: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         table_id = self._table_id(lottery_type)
         # import 関数側と同じ BigQuery API を使い、実装差分を減らす。
-        self.bq_client.insert_rows_json(table_id, rows)
+        errors = self.bq_client.insert_rows_json(table_id, rows)
+        if errors:
+            raise RuntimeError(f"BigQuery insert failed: table_id={table_id} errors={errors}")
         return {
             "inserted_rows": len(rows),
             "draw_no": rows[0].get("draw_no") if rows else None,
@@ -68,8 +70,9 @@ LIMIT {int(limit)}
         return draws
 
     def save_prediction_run(self, payload: dict[str, Any]) -> None:
-        # prediction_runs は「1口=1行」のスキーマなので、
-        # UseCase の predictions(list[list[int]]) をここで正規化して保存する。
+        # repository 層は UseCase payload と BigQuery schema の橋渡しを担う。
+        # prediction_runs は「1口=1行」スキーマなので、生 payload をそのまま保存せず、
+        # predictions(list[list[int]]) をスキーマ準拠の複数行へ正規化して保存する。
         table_id = f"{self.project_id}.{self.dataset}.{self.prediction_runs_table}"
         predictions = payload.get("predictions") or []
         if not predictions:
@@ -116,4 +119,6 @@ LIMIT {int(limit)}
                 }
             )
 
-        self.bq_client.insert_rows_json(table_id, rows_to_insert)
+        errors = self.bq_client.insert_rows_json(table_id, rows_to_insert)
+        if errors:
+            raise RuntimeError(f"BigQuery insert failed: table_id={table_id} errors={errors}")

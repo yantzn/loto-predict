@@ -35,8 +35,9 @@ def _decode_pubsub_message(cloud_event) -> dict[str, object]:
 
 
 def _table_name(lottery_type: str) -> str:
-    # 予想処理(Repository)と同じ履歴テーブルへ投入し、
-    # import と prediction が同一データソースを参照するように揃える。
+    # repository_factory の既定値は loto6_history / loto7_history。
+    # generate_prediction_and_notify もこの history テーブルを参照する前提のため、
+    # import 先だけ results 系へずれると処理フローが分断される。
     normalized = str(lottery_type).strip().lower()
     if normalized == "loto6":
         return "loto6_history"
@@ -128,6 +129,7 @@ def entry_point(cloud_event):
     # 既存回号を差し引いてからinsertし、再実行時の重複登録を防ぐ。
     # parse_csv_to_rows() は n1..n7, b1..b2 のBQスキーマ前提で返すため、
     # ここでは number1 等への再変換を行わず、そのまま履歴テーブルへ投入する。
+    # 列名統一方針は BigQuery schema / repository 側と合わせて別修正で管理する。
     insert_rows = [row for row in rows if row["draw_no"] not in existing]
     if insert_rows:
         errors = bq_client.insert_rows_json(table_id, insert_rows)
@@ -142,9 +144,10 @@ def entry_point(cloud_event):
     )
 
     logger.info(
-        "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s inserted=%s skipped=%s notify_message_id=%s",
+        "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s table_id=%s inserted=%s skipped=%s notify_message_id=%s",
         execution_id,
         lottery_type,
+        table_id,
         len(insert_rows),
         len(existing),
         notify_message_id,
