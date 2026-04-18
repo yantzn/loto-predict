@@ -125,7 +125,8 @@ class GenerateAndNotifyUseCase:
                 )
 
             self.logger.exception(
-                "Failed to generate or notify predictions. execution_id=%s lottery_type=%s latest_draw_no=%s error_message=%s",
+                "Failed to generate or notify predictions. status=%s execution_id=%s lottery_type=%s latest_draw_no=%s error_message=%s",
+                "FAILED",
                 execution_id,
                 normalized_lottery_type,
                 history_rows[0].get("draw_no"),
