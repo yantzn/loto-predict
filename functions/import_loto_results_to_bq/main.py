@@ -123,6 +123,7 @@ def entry_point(request) -> tuple[str, int, dict[str, str]]:
             object_name = str(message["gcs_object"]).strip()
 
         # GCS/ローカルストレージクライアント生成
+
         storage_client = create_storage_client()
         # GCP実行時のみBigQueryクライアントを生成
         bq_client = None if settings.env == "local" else BigQueryClient(project_id=settings.gcp.project_id)
@@ -138,7 +139,7 @@ def entry_point(request) -> tuple[str, int, dict[str, str]]:
         )
 
         # ローカル実行時はfile://、GCP時はgs://でURIを組み立て
-        if settings.app_env == "local":
+        if settings.env == "local":
             storage_uri = f"file://{object_name}"
         else:
             storage_uri = f"gs://{bucket_name}/{object_name}"

@@ -2,56 +2,61 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+
+from __future__ import annotations
+import os
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional
 
-def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
-    value = os.getenv(name, default)
-    if isinstance(value, str):
-        value = value.strip()
-    return value
-
-def _require_env(name: str) -> str:
-    value = _get_env(name)
-    if not value:
-        raise ValueError(f"Required environment variable is not set: {name}")
-    return value
-
-def _to_bool(value: Optional[str], default: bool = False) -> bool:
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
-
-def _to_int(value: Optional[str], default: int) -> int:
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except ValueError as exc:
-        raise ValueError(f"Invalid integer value: {value}") from exc
-
-@dataclass(frozen=True)
+@dataclass
 class GCPSettings:
     project_id: str
-    region: str
     bigquery_dataset: str
 
-@dataclass(frozen=True)
+@dataclass
 class LotterySettings:
     stats_target_draws: int
     prediction_count: int
-    loto6_number_min: int
-    loto6_number_max: int
-    loto6_pick_count: int
-    loto7_number_min: int
-    loto7_number_max: int
-    loto7_pick_count: int
+    loto6_pick_count: int = 6
+    loto6_number_min: int = 1
+    loto6_number_max: int = 43
+    loto7_pick_count: int = 7
+    loto7_number_min: int = 1
+    loto7_number_max: int = 37
 
-@dataclass(frozen=True)
+@dataclass
 class LineSettings:
     channel_access_token: str
     user_id: str
 
-@dataclass(frozen=True)
+@dataclass
+class AppSettings:
+    env: str
+    gcp: GCPSettings
+    lottery: LotterySettings
+    line: LineSettings
+
+@lru_cache()
+def get_settings() -> AppSettings:
+    """
+    設定値を一元的に取得する。env, gcp, lottery, line すべてここから参照すること。
+    app_env等の揺れは許容しない。
+    """
+    env = os.environ.get("ENV", "local")
+    gcp = GCPSettings(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        bigquery_dataset=os.environ["BQ_DATASET"],
+    )
+    lottery = LotterySettings(
+        stats_target_draws=int(os.environ.get("STATS_TARGET_DRAWS", 100)),
+        prediction_count=int(os.environ.get("PREDICTION_COUNT", 5)),
+    )
+    line = LineSettings(
+        channel_access_token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
+        user_id=os.environ.get("LINE_USER_ID", ""),
+    )
+    return AppSettings(env=env, gcp=gcp, lottery=lottery, line=line)
 class LoggingSettings:
     level: str
     json_logs: bool

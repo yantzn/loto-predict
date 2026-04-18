@@ -48,12 +48,15 @@ class GenerateAndNotifyUseCase:
 
         # スコア計算（頻度等）
         scored_numbers = calculate_number_scores(draws)
+
         pick_count = 6 if lottery_type == "loto6" else 7
-        # 予想番号生成（5口に統一）
+        # 予想番号生成（settings.lottery.prediction_countで統一）
+        from src.config.settings import get_settings
+        settings = get_settings()
         predictions = generate_predictions(
             scored_numbers=scored_numbers,
             pick_count=pick_count,
-            num_predictions=5,
+            num_predictions=settings.lottery.prediction_count,
         )
 
         # 通知メッセージ生成・送信

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from src.infrastructure.serializer.loto_csv import serialize_results_to_csv
+from src.infrastructure.loto_csv import serialize_results_to_csv
 
 
 class FetchLatestResultsUseCase:
@@ -40,6 +40,7 @@ class FetchLatestResultsUseCase:
 
         # 最新結果を取得
         result = self.scraper.fetch_latest_result(lottery_type)
+        self.logger.info(f"Fetched latest result: lottery_type={lottery_type} draw_no={getattr(result, 'draw_no', None)}")
 
         # CSVテキストへ変換
         csv_text = serialize_results_to_csv(
@@ -49,10 +50,10 @@ class FetchLatestResultsUseCase:
 
         # 保存先パスを組み立て
         now = datetime.now(timezone.utc)
-        draw_no = getattr(result, "draw_no")
-        draw_date = getattr(result, "draw_date")
-
+        draw_no = getattr(result, "draw_no", None)
+        draw_date = getattr(result, "draw_date", None)
         blob_name = f"raw/{lottery_type}/{now:%Y/%m/%d}/{lottery_type}_{draw_no}.csv"
+
         # GCSへアップロード
         gcs_uri = self.gcs_client.upload_bytes(
             bucket_name=self.bucket_name,
@@ -61,7 +62,7 @@ class FetchLatestResultsUseCase:
             content_type="text/csv",
         )
 
-        self.logger.info("Fetched latest result and uploaded csv: %s", gcs_uri)
+        self.logger.info(f"Uploaded csv to GCS: {gcs_uri}")
 
         return {
             "lottery_type": lottery_type,
