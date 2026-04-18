@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +23,6 @@ from src.usecases.fetch_latest_results import FetchLatestResultsUseCase
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-IMPORT_TOPIC_NAME = os.getenv("PUBSUB_IMPORT_TOPIC", "import-loto-results")
-RAW_BUCKET_NAME = os.getenv("GCS_BUCKET_RAW", "")
-
 
 def _json_response(payload: dict[str, Any], status_code: int = 200):
     return (
@@ -40,29 +38,30 @@ def _extract_lottery_type(request) -> str:
     if not lottery_type:
         raise ValueError("lottery_type is required")
 
-    normalized = str(lottery_type).strip().upper()
-    if normalized not in {"LOTO6", "LOTO7"}:
-        raise ValueError("lottery_type must be LOTO6 or LOTO7")
-
+    normalized = str(lottery_type).strip().lower()
+    if normalized not in {"loto6", "loto7"}:
+        raise ValueError("lottery_type must be loto6 or loto7")
     return normalized
 
 
 def _extract_execution_id(request) -> str:
     body = request.get_json(silent=True) or {}
     execution_id = body.get("execution_id") or request.args.get("execution_id")
-    return str(execution_id).strip() if execution_id else ""
+    return str(execution_id).strip() if execution_id else str(uuid.uuid4())
 
 
 def _publish_import_message(
     *,
     execution_id: str,
     lottery_type: str,
+    gcs_bucket: str,
     gcs_object: str,
     draw_no: int,
     draw_date: str,
 ) -> str:
     settings = get_settings()
-    if settings.env == "local":
+
+    if settings.is_local:
         logger.info(
             "Skip Pub/Sub publish in local mode. execution_id=%s lottery_type=%s gcs_object=%s",
             execution_id,
@@ -71,14 +70,17 @@ def _publish_import_message(
         )
         return "local-skip"
 
+    if not settings.gcp.project_id:
+        raise ValueError("GCP_PROJECT_ID is required in non-local mode")
+
     publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(settings.gcp.project_id, IMPORT_TOPIC_NAME)
+    topic_path = publisher.topic_path(settings.gcp.project_id, settings.gcp.import_topic_name)
 
     message = {
         "event_type": "FETCH_COMPLETED",
         "execution_id": execution_id,
         "lottery_type": lottery_type,
-        "gcs_bucket": RAW_BUCKET_NAME,
+        "gcs_bucket": gcs_bucket,
         "gcs_object": gcs_object,
         "draw_no": draw_no,
         "draw_date": draw_date,
@@ -91,74 +93,19 @@ def _publish_import_message(
     return future.result()
 
 
-def entry_point(request) -> tuple[str, int, dict[str, str]]:
-    """
-    Cloud Functionsエントリーポイント。
-    楽天ロトから最新結果を取得し、GCS保存・Pub/Sub通知を行う。
-    Pub/SubまたはHTTPトリガーで呼ばれる。
-    入力値抽出・usecase呼び出し・レスポンス返却のみ担当。
-    Args:
-        request: Flaskリクエストオブジェクト（GCP Functions標準）
-    Returns:
-        (body, status_code, headers) のタプル
-    """
+def entry_point(request):
+    settings = get_settings()
     execution_id = ""
     lottery_type = ""
     try:
-        # lottery_type, execution_idはHTTP/JSON両対応で抽出
-        lottery_type = _extract_lottery_type(request)
-        execution_id = _extract_execution_id(request)
-
-        # 楽天ロトクライアント・GCSクライアント生成
-        scraper = RakutenLotoClient()
-        storage_client = create_storage_client()
-
-        # ユースケース呼び出し（ビジネスロジックはusecase層に集約）
-        usecase = FetchLatestResultsUseCase(
-            scraper=scraper,
-            gcs_client=storage_client,
-            bucket_name=RAW_BUCKET_NAME,
-            logger=logger,
-        )
-
-        result = usecase.execute(lottery_type.lower())
-
-        # 取得結果をPub/Subで通知（ローカル時はスキップ）
-        publish_message_id = _publish_import_message(
-            execution_id=execution_id,
-            lottery_type=lottery_type,
-            gcs_object=result["gcs_object"],
-            draw_no=int(result["draw_no"]),
-            draw_date=str(result["draw_date"]),
-        )
-
-        return _json_response(
-            {
-                "status": "ok",
-                "execution_id": execution_id,
-                "lottery_type": lottery_type,
-                "gcs_uri": result["gcs_uri"],
-                "gcs_bucket": RAW_BUCKET_NAME if get_settings().env != "local" else "",
-                "gcs_object": result["gcs_object"],
-                "draw_no": result["draw_no"],
-                "draw_date": result["draw_date"],
-                "published_message_id": publish_message_id,
-            }
-        )
-
-    except Exception as exc:
-        # 例外発生時は詳細ログを残し、エラー内容を返す
-        logger.exception(
-            "fetch_loto_results failed. execution_id=%s lottery_type=%s",
-            execution_id,
-            lottery_type,
-        )
-        return _json_response(
-            {
-                "status": "error",
-                "execution_id": execution_id,
-                "lottery_type": lottery_type,
-                "message": str(exc),
-            },
-            500,
-        )
+        data = request.get_json()
+        lottery_type = data.get("lottery_type")
+        execution_id = data.get("execution_id")
+        result = fetch_and_save_latest_results(lottery_type)
+        # Pub/Sub import topic へpublish（ダミー）
+        # publish_import_topic(result)
+        logger.info(f"fetch_loto_results: lottery_type={lottery_type} draw_no={result['draw_no']} execution_id={execution_id}")
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        logger.error(f"fetch_loto_results error: {e}")
+        return {"status": "error", "message": str(e)}

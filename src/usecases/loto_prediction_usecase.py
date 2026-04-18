@@ -66,8 +66,8 @@ def generate_and_notify_prediction(lottery_type: str) -> dict:
     # prediction_runs保存
     run = PredictionRun(
         lottery_type=lottery_type,
-        draw_number=rows[0]['draw_number'] if rows else 0,
-        predictions=[Prediction(lottery_type, rows[0]['draw_number'] if rows else 0, p, datetime.now().isoformat()) for p in predictions],
+        draw_no=rows[0]['draw_no'] if rows else 0,
+        predictions=[Prediction(lottery_type, rows[0]['draw_no'] if rows else 0, p, datetime.now().isoformat()) for p in predictions],
         created_at=datetime.now().isoformat()
     )
     bq_client.insert_prediction_run('prediction_runs', run.__dict__)
