@@ -24,8 +24,6 @@ from src.usecases.import_results_csv import ImportResultsCsvUseCase
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-NOTIFY_TOPIC_NAME = os.getenv("PUBSUB_NOTIFY_TOPIC", "notify-loto-prediction")
-
 
 def _json_response(payload: dict[str, Any], status_code: int = 200):
     return (
@@ -37,14 +35,12 @@ def _json_response(payload: dict[str, Any], status_code: int = 200):
 
 def _extract_event_message(request) -> dict[str, Any]:
     body = request.get_json(silent=True) or {}
-
     if "message" in body and isinstance(body["message"], dict):
         encoded = body["message"].get("data")
         if not encoded:
             raise ValueError("Pub/Sub message.data is missing")
         decoded = base64.b64decode(encoded).decode("utf-8")
         return json.loads(decoded)
-
     return body
 
 
@@ -62,7 +58,8 @@ def _publish_notify_message(
     skipped_as_duplicate: bool,
 ) -> str:
     settings = get_settings()
-    if settings.env == "local":
+
+    if settings.is_local:
         logger.info(
             "Skip Pub/Sub publish in local mode. execution_id=%s lottery_type=%s draw_no=%s",
             execution_id,
@@ -72,7 +69,10 @@ def _publish_notify_message(
         return "local-skip"
 
     publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(settings.gcp.project_id, NOTIFY_TOPIC_NAME)
+    topic_path = publisher.topic_path(
+        settings.gcp.project_id,
+        settings.gcp.notify_topic_name,
+    )
 
     message = {
         "event_type": "IMPORT_COMPLETED",
@@ -91,45 +91,46 @@ def _publish_notify_message(
 
 def entry_point(request) -> tuple[str, int, dict[str, str]]:
     """
-    Cloud Functionsエントリーポイント。
-    GCS/ローカルのCSVをBigQueryに取り込み、完了通知をPub/Subで発行。
-    Pub/SubまたはHTTPトリガーで呼ばれる。
-    入力値抽出・usecase呼び出し・レスポンス返却のみ担当。
-    Args:
-        request: Flaskリクエストオブジェクト（GCP Functions標準）
-    Returns:
-        (body, status_code, headers) のタプル
+    Cloud Functions エントリーポイント。
+    Pub/Sub push または HTTP で呼ばれ、CSV を BigQuery に取り込む。
     """
     execution_id = ""
     lottery_type = ""
     bucket_name = ""
     object_name = ""
-    try:
-        # Pub/Sub経由・HTTP経由どちらも吸収する
-        message = _extract_event_message(request)
 
-        # ローカル実行時はバケット名不要
+    try:
+        message = _extract_event_message(request)
         settings = get_settings()
-        if settings.env == "local":
+
+        if settings.is_local:
             _require_fields(message, ["execution_id", "lottery_type", "gcs_object"])
             execution_id = str(message["execution_id"]).strip()
             lottery_type = str(message["lottery_type"]).strip().lower()
             object_name = str(message["gcs_object"]).strip()
         else:
-            _require_fields(message, ["execution_id", "lottery_type", "gcs_bucket", "gcs_object"])
+            _require_fields(
+                message,
+                ["execution_id", "lottery_type", "gcs_bucket", "gcs_object"],
+            )
             execution_id = str(message["execution_id"]).strip()
             lottery_type = str(message["lottery_type"]).strip().lower()
             bucket_name = str(message["gcs_bucket"]).strip()
             object_name = str(message["gcs_object"]).strip()
 
-        # GCS/ローカルストレージクライアント生成
+        logger.info(
+            "Start import_loto_results_to_bq. env=%s execution_id=%s lottery_type=%s gcs_bucket=%s gcs_object=%s",
+            settings.env,
+            execution_id,
+            lottery_type,
+            bucket_name,
+            object_name,
+        )
 
         storage_client = create_storage_client()
-        # GCP実行時のみBigQueryクライアントを生成
-        bq_client = None if settings.env == "local" else BigQueryClient(project_id=settings.gcp.project_id)
+        bq_client = None if settings.is_local else BigQueryClient(project_id=settings.gcp.project_id)
         repository = create_loto_repository(bq_client=bq_client)
 
-        # ユースケース呼び出し（ビジネスロジックはusecase層に集約）
         usecase = ImportResultsCsvUseCase(
             settings=settings,
             gcs_client=storage_client,
@@ -138,18 +139,15 @@ def entry_point(request) -> tuple[str, int, dict[str, str]]:
             logger=logger,
         )
 
-        # ローカル実行時はfile://、GCP時はgs://でURIを組み立て
-        if settings.env == "local":
+        if settings.is_local:
             storage_uri = f"file://{object_name}"
         else:
             storage_uri = f"gs://{bucket_name}/{object_name}"
 
         result = usecase.execute(lottery_type, storage_uri)
-
         draw_no = result.get("draw_no")
         skipped_as_duplicate = bool(result.get("skipped_as_duplicate", False))
 
-        # 取込完了をPub/Subで通知（ローカル時はスキップ）
         publish_message_id = _publish_notify_message(
             execution_id=execution_id,
             lottery_type=lottery_type.upper(),
@@ -169,7 +167,6 @@ def entry_point(request) -> tuple[str, int, dict[str, str]]:
         )
 
     except Exception as exc:
-        # 例外発生時は詳細ログを残し、エラー内容を返す
         logger.exception(
             "import_loto_results_to_bq failed. execution_id=%s lottery_type=%s object=%s",
             execution_id,
