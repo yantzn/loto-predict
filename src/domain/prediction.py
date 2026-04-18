@@ -74,6 +74,17 @@ def generate_predictions(
     """
     統計スコアを重みに使って、重複なしの予想組合せを生成する。
 
+    Args:
+        number_scores: 統計スコア計算後の (番号, スコア) 配列。
+            history_rows ではなく、UseCase で統計化済みデータを渡す。
+        lottery_type: loto6 / loto7 のみを受け付ける。
+        prediction_count: 生成する口数。
+        rng: テスト用に差し込める乱数生成器。
+        seed: rng 未指定時に使う seed。
+
+    Returns:
+        1口ごとの番号リスト。1口内の順序はスコア降順で固定する。
+
     返却する1口内の順序は、当たりやすさの高い番号を先に見せるため、
     "重み降順・同点は数値昇順" で固定する。
     一方で重複判定は順序を無視して番号集合で行う。
@@ -99,6 +110,8 @@ def generate_predictions(
 
     predictions: list[list[int]] = []
     seen_combinations: set[tuple[int, ...]] = set()
+    # 組合せ空間が大きいため、理論上の上限を毎回総当たりせず、
+    # 生成済みの重複検知と試行回数上限で現実的に打ち切る。
     max_attempts = max(200, prediction_count * 200)
     attempts = 0
 

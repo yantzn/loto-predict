@@ -1,8 +1,15 @@
-import random
-
 import pytest
 
 from src.domain.prediction import generate_predictions
+
+
+class _FakeRng:
+    def __init__(self, planned_choices: list[int]) -> None:
+        self._planned_choices = iter(planned_choices)
+
+    def choices(self, population, weights=None, k=1):
+        del population, weights, k
+        return [next(self._planned_choices)]
 
 
 def _number_scores_loto6() -> list[tuple[int, float]]:
@@ -76,7 +83,7 @@ def test_generate_predictions_uses_score_priority_order() -> None:
 
 
 def test_generate_predictions_output_order_is_weight_desc_then_number_asc() -> None:
-    rng = random.Random(0)
+    rng = _FakeRng([1, 5, 9, 2, 3, 4])
     predictions = generate_predictions(
         number_scores=[(5, 10.0), (2, 10.0), (9, 2.0), (1, 0.0), (3, 0.0)],
         lottery_type="loto6",
@@ -85,9 +92,7 @@ def test_generate_predictions_output_order_is_weight_desc_then_number_asc() -> N
     )
 
     # 同点(2,5)は数値昇順。重みが高い番号ほど前に来る。
-    numbers = predictions[0]
-    if 2 in numbers and 5 in numbers:
-        assert numbers.index(2) < numbers.index(5)
+    assert predictions[0] == [2, 5, 9, 1, 3, 4]
 
 
 def test_generate_predictions_raises_for_invalid_prediction_count() -> None:

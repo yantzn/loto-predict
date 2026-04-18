@@ -5,13 +5,17 @@ from collections import Counter
 
 def calculate_number_scores(draws: list[list[int]]) -> list[tuple[int, float]]:
     """
-    過去抽選結果リストから各番号の出現頻度スコアを計算。
+    過去抽選結果の各番号について、出現頻度スコアを計算する。
 
     Args:
-        draws (list[list[int]]): 過去の番号リスト
+        draws: 1回分の抽選結果を表す番号配列のリスト。
+            UseCase 側で history_rows から `n1`..`n6` / `n7` を取り出して渡す前提。
 
     Returns:
-        list[tuple[int, float]]: (番号, 出現回数)のリスト
+        番号ごとの (number, score) 配列。空入力なら空配列を返す。
+
+    Notes:
+        異常値は無視する。数字として解釈できない値や 0 以下の値は集計しない。
     """
     if not draws:
         return []
