@@ -1,6 +1,3 @@
-bq_client = bigquery.Client(project=PROJECT_ID)
-def execution_logs_table_id() -> str:
-def write_execution_log(
 from __future__ import annotations
 
 import logging

@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - develop
     paths:
       # 関数・依存コード・スクリプト・ワークフローの変更時にのみ発火
       - "functions/**"

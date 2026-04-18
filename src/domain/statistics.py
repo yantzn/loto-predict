@@ -13,10 +13,24 @@ def calculate_number_scores(draws: list[list[int]]) -> list[tuple[int, float]]:
     Returns:
         list[tuple[int, float]]: (番号, 出現回数)のリスト
     """
+    if not draws:
+        return []
+
     counter: Counter[int] = Counter()
 
     for draw in draws:
+        if not isinstance(draw, list):
+            continue
         for number in draw:
-            counter[number] += 1
+            try:
+                parsed = int(number)
+            except (TypeError, ValueError):
+                continue
+            if parsed <= 0:
+                continue
+            counter[parsed] += 1
 
-    return [(number, float(score)) for number, score in counter.items()]
+    return sorted(
+        [(number, float(score)) for number, score in counter.items()],
+        key=lambda item: (-item[1], item[0]),
+    )

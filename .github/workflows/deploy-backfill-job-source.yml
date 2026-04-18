@@ -6,7 +6,6 @@ on:
   push:
     branches:
       - main
-      - develop
     paths:
       # バックフィルジョブや依存コード・スクリプト・ワークフローの変更時にのみ発火
       - "jobs/backfill_loto_history/**"

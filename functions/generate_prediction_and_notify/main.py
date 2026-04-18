@@ -15,7 +15,7 @@ PROJECT_ROOT = CURRENT_DIR.parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.config.settings import get_settings
+from src.config.settings import get_settings, require_line_settings
 from src.infrastructure.line.line_client import LineClient, NoopLineClient
 from src.infrastructure.repositories.repository_factory import create_loto_repository
 from src.usecases.generate_and_notify import GenerateAndNotifyUseCase
@@ -48,18 +48,16 @@ def entry_point(cloud_event):
         raise ValueError("lottery_type must be loto6 or loto7")
 
     use_dry_run = settings.is_local
-    if not use_dry_run and not settings.line.channel_access_token:
-        raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is required")
-    if not use_dry_run and not settings.line.user_id:
-        raise ValueError("LINE_USER_ID is required")
+    if not use_dry_run:
+        require_line_settings(settings)
 
-    stats_target_draws = settings.lottery.stats_target_draws_for(lottery_type)
+    history_limit = settings.lottery.stats_target_draws_for(lottery_type)
     prediction_count = settings.lottery.prediction_count
     logger.info(
-        "generate_prediction_and_notify start. execution_id=%s lottery_type=%s stats_target_draws=%s prediction_count=%s",
+        "generate_prediction_and_notify start. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
         execution_id,
         lottery_type,
-        stats_target_draws,
+        history_limit,
         prediction_count,
     )
 
@@ -72,9 +70,9 @@ def entry_point(cloud_event):
     # UseCase層には必要パラメータを明示的に渡し、層間責務を明確化する。
     result = usecase.execute(
         lottery_type=lottery_type,
-        stats_target_draws=stats_target_draws,
+        history_limit=history_limit,
         prediction_count=prediction_count,
-        line_user_id=settings.line.user_id,
+        line_user_id=settings.line.user_id or "",
         notify_enabled=not use_dry_run,
         execution_id=execution_id,
     )

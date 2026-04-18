@@ -1,4 +1,3 @@
-def get_logger():
 import logging
 
 def get_logger():

@@ -25,6 +25,9 @@ class GCPSettings:
     project_id: str
     region: str
     bigquery_dataset: str
+    table_loto6_history: str
+    table_loto7_history: str
+    table_prediction_runs: str
     raw_bucket_name: str
     import_topic_name: str
     notify_topic_name: str
@@ -54,8 +57,8 @@ class LotterySettings:
 
 @dataclass(frozen=True)
 class LineSettings:
-    channel_access_token: str
-    user_id: str
+    channel_access_token: Optional[str]
+    user_id: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,13 @@ def _validate(settings: AppSettings) -> None:
         raise ValueError("LOTO7_PICK_COUNT is larger than available range")
 
 
+def require_line_settings(settings: AppSettings) -> None:
+    if not settings.line.channel_access_token:
+        raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is required")
+    if not settings.line.user_id:
+        raise ValueError("LINE_USER_ID is required")
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
     app_env = _first_env("APP_ENV", default="local") or "local"
@@ -121,6 +131,9 @@ def get_settings() -> AppSettings:
             project_id=_first_env("GCP_PROJECT_ID", default="") or "",
             region=_first_env("GCP_REGION", default="asia-northeast1") or "asia-northeast1",
             bigquery_dataset=_first_env("BQ_DATASET", default="loto_predict") or "loto_predict",
+            table_loto6_history=_first_env("BQ_TABLE_LOTO6_HISTORY", default="loto6_history") or "loto6_history",
+            table_loto7_history=_first_env("BQ_TABLE_LOTO7_HISTORY", default="loto7_history") or "loto7_history",
+            table_prediction_runs=_first_env("BQ_TABLE_PREDICTION_RUNS", default="prediction_runs") or "prediction_runs",
             raw_bucket_name=_first_env("GCS_BUCKET_RAW", default="") or "",
             import_topic_name=_first_env("PUBSUB_IMPORT_TOPIC", default="import-loto-results") or "import-loto-results",
             notify_topic_name=_first_env("PUBSUB_NOTIFY_TOPIC", default="notify-loto-prediction") or "notify-loto-prediction",
@@ -138,8 +151,8 @@ def get_settings() -> AppSettings:
             loto7_pick_count=_to_int(_first_env("LOTO7_PICK_COUNT"), 7),
         ),
         line=LineSettings(
-            channel_access_token=_first_env("LINE_CHANNEL_ACCESS_TOKEN", default="") or "",
-            user_id=_first_env("LINE_USER_ID", default="") or "",
+            channel_access_token=_first_env("LINE_CHANNEL_ACCESS_TOKEN", default=None),
+            user_id=_first_env("LINE_USER_ID", default=None),
         ),
         logging=LoggingSettings(
             level=_first_env("LOG_LEVEL", default="INFO") or "INFO",
@@ -148,4 +161,9 @@ def get_settings() -> AppSettings:
         local_storage_path=_first_env("LOCAL_STORAGE_PATH", default="./local_storage") or "./local_storage",
     )
     _validate(settings)
+
+    # local は dry-run を許容し、本番系環境では LINE 設定を必須にする。
+    if settings.is_production:
+        require_line_settings(settings)
+
     return settings

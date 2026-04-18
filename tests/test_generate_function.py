@@ -65,7 +65,7 @@ def test_generate_entry_point_builds_line_message(monkeypatch) -> None:
     monkeypatch.setattr(generate_main, "LineClient", lambda token: captured_clients.append(_FakeLineClient(token)) or captured_clients[-1])
     monkeypatch.setattr(
         "src.usecases.generate_and_notify.generate_predictions",
-        lambda history_rows, lottery_type, prediction_count, seed=None: [[1, 2, 3, 4, 5, 6]] * prediction_count,
+        lambda number_scores, lottery_type, prediction_count, rng=None, seed=None: [[1, 2, 3, 4, 5, 6]] * prediction_count,
     )
 
     payload = {

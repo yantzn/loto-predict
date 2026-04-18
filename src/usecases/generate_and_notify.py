@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from src.domain.prediction import generate_predictions
+from src.domain.statistics import calculate_number_scores
 
 
 class GenerateAndNotifyUseCase:
@@ -15,7 +16,7 @@ class GenerateAndNotifyUseCase:
     def execute(
         self,
         lottery_type: str,
-        stats_target_draws: int,
+        history_limit: int,
         prediction_count: int,
         line_user_id: str,
         notify_enabled: bool = True,
@@ -26,27 +27,33 @@ class GenerateAndNotifyUseCase:
         # なぜ必要か:
         # - Function層に詳細ロジックを持たせず、再利用可能なユースケースとして責務分離するため。
         normalized_lottery_type = str(lottery_type).strip().lower()
+        if normalized_lottery_type not in {"loto6", "loto7"}:
+            raise ValueError("lottery_type must be loto6 or loto7")
+
         execution_id = execution_id or str(uuid4())
 
         if prediction_count <= 0:
             raise ValueError("prediction_count must be greater than 0")
-        if stats_target_draws <= 0:
-            raise ValueError("stats_target_draws must be greater than 0")
+        if history_limit <= 0:
+            raise ValueError("history_limit must be greater than 0")
         if notify_enabled and not line_user_id:
             raise ValueError("line_user_id is required when notify_enabled is True")
 
-        history_rows = self._fetch_history_rows(normalized_lottery_type, stats_target_draws)
+        history_rows = self._fetch_history_rows(normalized_lottery_type, history_limit)
         if not history_rows:
             raise ValueError(f"no history found for {normalized_lottery_type}")
 
         try:
-            # 予想アルゴリズムは domain 側へ委譲し、usecaseはオーケストレーションに専念する。
+            draws = self._extract_draws(history_rows, normalized_lottery_type)
+            number_scores = calculate_number_scores(draws)
+
+            # 統計スコア算出と予想生成は domain 層へ委譲し、usecase はオーケストレーションに専念する。
             predictions = generate_predictions(
-                history_rows=history_rows,
+                number_scores=number_scores,
                 lottery_type=normalized_lottery_type,
                 prediction_count=prediction_count,
             )
-            message = self._build_message(normalized_lottery_type, stats_target_draws, predictions)
+            message = self._build_message(normalized_lottery_type, len(history_rows), predictions)
             if notify_enabled:
                 self._send_line_message(line_user_id, message)
 
@@ -54,7 +61,7 @@ class GenerateAndNotifyUseCase:
             run_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
-                "stats_target_draws": stats_target_draws,
+                "history_limit": history_limit,
                 "history_count": len(history_rows),
                 "prediction_count": len(predictions),
                 "predictions": predictions,
@@ -65,10 +72,10 @@ class GenerateAndNotifyUseCase:
             self.repository.save_prediction_run(run_payload)
 
             self.logger.info(
-                "Generated and notified. execution_id=%s lottery_type=%s stats_target_draws=%s prediction_count=%s",
+                "Generated and notified. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
                 execution_id,
                 normalized_lottery_type,
-                stats_target_draws,
+                history_limit,
                 len(predictions),
             )
             return {
@@ -83,7 +90,7 @@ class GenerateAndNotifyUseCase:
             failure_payload = {
                 "execution_id": execution_id,
                 "lottery_type": normalized_lottery_type,
-                "stats_target_draws": stats_target_draws,
+                "history_limit": history_limit,
                 "history_count": len(history_rows),
                 "prediction_count": prediction_count,
                 "predictions": [],
@@ -120,6 +127,19 @@ class GenerateAndNotifyUseCase:
             rows.append(row)
         return rows
 
+    def _extract_draws(self, history_rows: list[dict[str, object]], lottery_type: str) -> list[list[int]]:
+        pick_count = 6 if lottery_type == "loto6" else 7
+        draws: list[list[int]] = []
+        for row in history_rows:
+            draw: list[int] = []
+            for index in range(1, pick_count + 1):
+                value = row.get(f"n{index}")
+                if value is None:
+                    raise ValueError(f"history row is missing n{index}: {row}")
+                draw.append(int(value))
+            draws.append(draw)
+        return draws
+
     def _send_line_message(self, user_id: str, message: str) -> None:
         # 送信処理の呼び出し点を分離しておくと、将来の再送/通知先切替に対応しやすい。
         self.line_client.push_message(user_id, message)
@@ -127,13 +147,16 @@ class GenerateAndNotifyUseCase:
     def _build_message(
         self,
         lottery_type: str,
-        history_limit: int,
+        history_count: int,
         predictions: list[list[int]],
     ) -> str:
         # 人が読みやすい本文形式へ整形し、通知文面を一箇所で管理する。
+        now_text = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         lines = [
             f"{lottery_type.upper()} 予想",
-            f"対象履歴: 直近{history_limit}件",
+            f"実行日時: {now_text}",
+            f"対象履歴: 直近{history_count}件",
+            f"予想口数: {len(predictions)}口",
             "",
         ]
         for index, numbers in enumerate(predictions, start=1):

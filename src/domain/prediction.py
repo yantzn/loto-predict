@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import math
 import random
-from collections import Counter
 
 
 def _lottery_spec(lottery_type: str) -> tuple[int, int, int]:
@@ -13,29 +13,28 @@ def _lottery_spec(lottery_type: str) -> tuple[int, int, int]:
     raise ValueError(f"unsupported lottery_type: {lottery_type}")
 
 
-def _extract_numbers(history_rows: list[dict[str, object]], lottery_type: str) -> list[int]:
-    _, _, pick_count = _lottery_spec(lottery_type)
-    numbers: list[int] = []
-
-    for row in history_rows:
-        for index in range(1, pick_count + 1):
-            value = row.get(f"n{index}")
-            if value is None:
-                continue
-            numbers.append(int(value))
-
-    return numbers
+def _normalize_scores(number_scores: list[tuple[int, float]]) -> dict[int, float]:
+    normalized: dict[int, float] = {}
+    for number, score in number_scores:
+        number_int = int(number)
+        score_float = float(score)
+        if score_float < 0:
+            continue
+        normalized[number_int] = score_float
+    return normalized
 
 
-def _build_weights(history_rows: list[dict[str, object]], lottery_type: str) -> dict[int, float]:
-    number_min, number_max, _ = _lottery_spec(lottery_type)
-    counts = Counter(_extract_numbers(history_rows, lottery_type))
-
-    # 出現頻度をそのまま重みに使い、未出現でも選ばれる余地を残す。
-    weights: dict[int, float] = {}
-    for number in range(number_min, number_max + 1):
-        weights[number] = 1.0 + float(counts.get(number, 0))
-    return weights
+def _build_weights(
+    number_min: int,
+    number_max: int,
+    score_map: dict[int, float],
+) -> dict[int, float]:
+    # 未出現番号も選択候補に残しつつ、統計スコアが高いほど選ばれやすくする。
+    # 最低重みを 1.0 に固定し、探索の多様性を担保する。
+    return {
+        number: 1.0 + max(score_map.get(number, 0.0), 0.0)
+        for number in range(number_min, number_max + 1)
+    }
 
 
 def _weighted_sample_without_replacement(
@@ -66,22 +65,41 @@ def _order_by_score(selected: list[int], weights: dict[int, float]) -> list[int]
 
 
 def generate_predictions(
-    history_rows: list[dict[str, object]],
+    number_scores: list[tuple[int, float]],
     lottery_type: str,
     prediction_count: int,
+    rng: random.Random | None = None,
     seed: int | None = None,
 ) -> list[list[int]]:
+    """
+    統計スコアを重みに使って、重複なしの予想組合せを生成する。
+
+    返却する1口内の順序は、当たりやすさの高い番号を先に見せるため、
+    "重み降順・同点は数値昇順" で固定する。
+    一方で重複判定は順序を無視して番号集合で行う。
+    """
     number_min, number_max, pick_count = _lottery_spec(lottery_type)
     if prediction_count <= 0:
         raise ValueError("prediction_count must be greater than 0")
 
+    population_size = number_max - number_min + 1
+    if population_size < pick_count:
+        raise ValueError("candidate count is smaller than required pick_count")
+
+    max_unique_combinations = math.comb(population_size, pick_count)
+    if prediction_count > max_unique_combinations:
+        raise ValueError(
+            "requested prediction_count exceeds maximum unique combinations"
+        )
+
     population = list(range(number_min, number_max + 1))
-    weights = _build_weights(history_rows, lottery_type)
-    rng = random.Random(seed)
+    score_map = _normalize_scores(number_scores)
+    weights = _build_weights(number_min, number_max, score_map)
+    random_source = rng if rng is not None else random.Random(seed)
 
     predictions: list[list[int]] = []
     seen_combinations: set[tuple[int, ...]] = set()
-    max_attempts = max(100, prediction_count * 100)
+    max_attempts = max(200, prediction_count * 200)
     attempts = 0
 
     while len(predictions) < prediction_count and attempts < max_attempts:
@@ -90,7 +108,7 @@ def generate_predictions(
             population=population,
             weights=weights,
             sample_size=pick_count,
-            rng=rng,
+            rng=random_source,
         )
         candidate = _order_by_score(sampled, weights)
         candidate_key = tuple(sorted(candidate))
@@ -100,7 +118,7 @@ def generate_predictions(
         predictions.append(candidate)
 
     if len(predictions) != prediction_count:
-        raise RuntimeError(
+        raise ValueError(
             f"failed to generate enough unique predictions: requested={prediction_count} generated={len(predictions)}"
         )
 

@@ -1,24 +1,32 @@
+import random
+
+import pytest
+
 from src.domain.prediction import generate_predictions
 
 
-def _history_rows(lottery_type: str) -> list[dict[str, object]]:
-    if lottery_type == "loto6":
-        return [
-            {"draw_no": 1, "n1": 1, "n2": 2, "n3": 3, "n4": 4, "n5": 5, "n6": 6},
-            {"draw_no": 2, "n1": 1, "n2": 8, "n3": 13, "n4": 21, "n5": 34, "n6": 42},
-            {"draw_no": 3, "n1": 2, "n2": 4, "n3": 6, "n4": 8, "n5": 10, "n6": 12},
-        ]
-
+def _number_scores_loto6() -> list[tuple[int, float]]:
     return [
-        {"draw_no": 1, "n1": 1, "n2": 2, "n3": 3, "n4": 4, "n5": 5, "n6": 6, "n7": 7},
-        {"draw_no": 2, "n1": 2, "n2": 4, "n3": 6, "n4": 8, "n5": 10, "n6": 12, "n7": 14},
-        {"draw_no": 3, "n1": 7, "n2": 11, "n3": 13, "n4": 17, "n5": 19, "n6": 23, "n7": 29},
+        (1, 10.0),
+        (2, 9.0),
+        (3, 8.0),
+        (4, 7.0),
+        (5, 6.0),
+        (6, 5.0),
+        (7, 4.0),
+        (8, 3.0),
+        (9, 2.0),
+        (10, 1.0),
     ]
+
+
+def _number_scores_loto7() -> list[tuple[int, float]]:
+    return [(number, float(38 - number)) for number in range(1, 38)]
 
 
 def test_generate_predictions_loto6_unique_and_constraints() -> None:
     predictions = generate_predictions(
-        history_rows=_history_rows("loto6"),
+        number_scores=_number_scores_loto6(),
         lottery_type="loto6",
         prediction_count=5,
         seed=123,
@@ -33,7 +41,7 @@ def test_generate_predictions_loto6_unique_and_constraints() -> None:
 
 def test_generate_predictions_loto7_pick_count_is_seven() -> None:
     predictions = generate_predictions(
-        history_rows=_history_rows("loto7"),
+        number_scores=_number_scores_loto7(),
         lottery_type="loto7",
         prediction_count=5,
         seed=456,
@@ -47,43 +55,63 @@ def test_generate_predictions_loto7_pick_count_is_seven() -> None:
 
 
 def test_generate_predictions_uses_score_priority_order() -> None:
-    history_rows = [
-        {"draw_no": 1, "n1": 1, "n2": 1, "n3": 1, "n4": 2, "n5": 3, "n6": 4},
-        {"draw_no": 2, "n1": 1, "n2": 2, "n3": 3, "n4": 4, "n5": 5, "n6": 6},
-        {"draw_no": 3, "n1": 2, "n2": 3, "n3": 4, "n4": 5, "n5": 6, "n6": 7},
-    ]
+    score_map = {1: 100.0, 2: 90.0, 3: 80.0, 4: 70.0, 5: 60.0, 6: 50.0}
     predictions = generate_predictions(
-        history_rows=history_rows,
+        number_scores=list(score_map.items()),
         lottery_type="loto6",
         prediction_count=1,
-        seed=9,
+        seed=3,
     )
     prediction = predictions[0]
 
-    # この履歴では 1/2/3/4 の重みが高く、出力順も重み優先になる。
-    if 1 in prediction and 6 in prediction:
-        assert prediction.index(1) < prediction.index(6)
+    def weight_of(number: int) -> float:
+        return 1.0 + score_map.get(number, 0.0)
+
+    for earlier, later in zip(prediction, prediction[1:]):
+        earlier_weight = weight_of(earlier)
+        later_weight = weight_of(later)
+        assert earlier_weight >= later_weight
+        if earlier_weight == later_weight:
+            assert earlier <= later
+
+
+def test_generate_predictions_output_order_is_weight_desc_then_number_asc() -> None:
+    rng = random.Random(0)
+    predictions = generate_predictions(
+        number_scores=[(5, 10.0), (2, 10.0), (9, 2.0), (1, 0.0), (3, 0.0)],
+        lottery_type="loto6",
+        prediction_count=1,
+        rng=rng,
+    )
+
+    # 同点(2,5)は数値昇順。重みが高い番号ほど前に来る。
+    numbers = predictions[0]
+    if 2 in numbers and 5 in numbers:
+        assert numbers.index(2) < numbers.index(5)
 
 
 def test_generate_predictions_raises_for_invalid_prediction_count() -> None:
-    try:
+    with pytest.raises(ValueError, match="prediction_count"):
         generate_predictions(
-            history_rows=_history_rows("loto6"),
+            number_scores=_number_scores_loto6(),
             lottery_type="loto6",
             prediction_count=0,
         )
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "prediction_count" in str(exc)
 
 
 def test_generate_predictions_raises_for_unsupported_lottery_type() -> None:
-    try:
+    with pytest.raises(ValueError, match="unsupported"):
         generate_predictions(
-            history_rows=_history_rows("loto6"),
+            number_scores=_number_scores_loto6(),
             lottery_type="mini-loto",
             prediction_count=1,
         )
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "unsupported" in str(exc)
+
+
+def test_generate_predictions_raises_when_unique_combinations_exceeded() -> None:
+    with pytest.raises(ValueError, match="maximum unique combinations"):
+        generate_predictions(
+            number_scores=[(1, 1.0), (2, 1.0), (3, 1.0), (4, 1.0), (5, 1.0), (6, 1.0)],
+            lottery_type="loto6",
+            prediction_count=6_500_000,
+        )
