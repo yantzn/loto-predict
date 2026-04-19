@@ -12,3 +12,4 @@ __pycache__/
 # ローカルストレージの生データ・インポートデータをGit管理対象外に
 local_storage/raw/
 local_storage/imported/
+local_storage/backfill/

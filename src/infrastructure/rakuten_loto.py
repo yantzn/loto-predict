@@ -61,14 +61,23 @@ class RakutenLotoClient:
 
         try:
             html = self._fetch_html(url)
-            results = self._parse_results_from_html(html=html, lottery_type=normalized, source_url=url)
+            results = self._parse_results_from_html(
+                html=html,
+                lottery_type=normalized,
+                source_url=url,
+            )
             if not results:
                 raise ValueError(f"latest result not found: lottery_type={normalized}")
+
             latest = max(results, key=lambda result: result.draw_no)
             latest.validate()
             return latest
         except Exception:
-            logger.exception("Failed to fetch latest result. lottery_type=%s url=%s", normalized, url)
+            logger.exception(
+                "Failed to fetch latest result. lottery_type=%s url=%s",
+                normalized,
+                url,
+            )
             raise
 
     def fetch_history(
@@ -80,18 +89,37 @@ class RakutenLotoClient:
         normalized = self._normalize_lottery_type(lottery_type)
         start = self._coerce_date(start_date)
         end = self._coerce_date(end_date)
+
         if start > end:
             raise ValueError("start_date must be <= end_date")
 
         all_results: dict[int, LotoResult] = {}
 
-        for year, month in self._iter_year_month(start.year, start.month, end.year, end.month):
+        for year, month in self._iter_year_month(
+            start.year,
+            start.month,
+            end.year,
+            end.month,
+        ):
             yyyymm = f"{year}{month:02d}"
             url = self.BASE_URLS[normalized]["monthly"].format(yyyymm=yyyymm)
 
             try:
                 html = self._fetch_html(url)
-                monthly_results = self._parse_results_from_html(html=html, lottery_type=normalized, source_url=url)
+                monthly_results = self._parse_results_from_html(
+                    html=html,
+                    lottery_type=normalized,
+                    source_url=url,
+                )
+
+                logger.info(
+                    "Fetched monthly history. lottery_type=%s yyyymm=%s count=%s url=%s",
+                    normalized,
+                    yyyymm,
+                    len(monthly_results),
+                    url,
+                )
+
                 for result in monthly_results:
                     draw_date = self._coerce_date(result.draw_date)
                     if start <= draw_date <= end:
@@ -123,14 +151,130 @@ class RakutenLotoClient:
         lottery_type: str,
         source_url: str,
     ) -> list[LotoResult]:
-        soup = BeautifulSoup(html, "html.parser")
-        results: list[LotoResult] = []
+        """
+        楽天の結果ページは、少なくとも現行の月別ページでは
+        「回号 / 抽せん日 / 本数字 / ボーナス数字」が縦並びのプレーンテキストとして
+        取得できるため、<tr> 単位ではなくページ全文テキストから抽出する。
 
-        for row in soup.find_all("tr"):
+        旧実装互換のため、最後に <tr> ベースのフォールバックも残す。
+        """
+        soup = BeautifulSoup(html, "html.parser")
+
+        results = self._parse_results_from_full_text(
+            soup=soup,
+            lottery_type=lottery_type,
+            source_url=source_url,
+        )
+        if results:
+            return results
+
+        logger.info(
+            "Full-text parse returned no results. Fallback to row-based parse. lottery_type=%s url=%s",
+            lottery_type,
+            source_url,
+        )
+
+        fallback_results = self._parse_results_from_rows(
+            soup=soup,
+            lottery_type=lottery_type,
+            source_url=source_url,
+        )
+        return fallback_results
+
+    def _parse_results_from_full_text(
+        self,
+        soup: BeautifulSoup,
+        lottery_type: str,
+        source_url: str,
+    ) -> list[LotoResult]:
+        spec = self.SPECS[lottery_type]
+        text = soup.get_text("\n", strip=True)
+        normalized = self._normalize_page_text(text)
+
+        # 楽天ページは「回号 第1962回 / 抽せん日 2025/01/06 / 本数字 ... / ボーナス数字 (...)」
+        # の縦並びなので、このまとまりごとに抽出する。
+        block_pattern = re.compile(
+            rf"回号\s*第0*(?P<draw_no>\d+)回\s*"
+            rf"抽せん日\s*(?P<draw_date>\d{{4}}/\d{{2}}/\d{{2}})\s*"
+            rf"本数字\s*(?P<main>(?:\d+\s+){{{spec.pick_count - 1}}}\d+)\s*"
+            rf"ボーナス数字\s*[\(（](?P<bonus>(?:\d+\s*){{{spec.bonus_count}}})[\)）]",
+            flags=re.MULTILINE,
+        )
+
+        results: list[LotoResult] = []
+        for match in block_pattern.finditer(normalized):
+            main_numbers = self._extract_numbers(
+                match.group("main"),
+                expected_count=spec.pick_count,
+            )
+            bonus_numbers = self._extract_numbers(
+                match.group("bonus"),
+                expected_count=spec.bonus_count,
+            )
+
+            if main_numbers is None or bonus_numbers is None:
+                continue
+
+            result = LotoResult(
+                lottery_type=lottery_type,
+                draw_no=int(match.group("draw_no")),
+                draw_date=match.group("draw_date").replace("/", "-"),
+                main_numbers=main_numbers,
+                bonus_numbers=bonus_numbers,
+                source_url=source_url,
+            )
+            result.validate()
+            results.append(result)
+
+        deduped = {result.draw_no: result for result in results}
+        parsed = sorted(deduped.values(), key=lambda result: result.draw_no, reverse=True)
+
+        logger.info(
+            "Parsed full-text history. lottery_type=%s url=%s parsed_count=%s sample_draw_nos=%s",
+            lottery_type,
+            source_url,
+            len(parsed),
+            [result.draw_no for result in parsed[:5]],
+        )
+
+        return parsed
+
+    def _parse_results_from_rows(
+        self,
+        soup: BeautifulSoup,
+        lottery_type: str,
+        source_url: str,
+    ) -> list[LotoResult]:
+        results: list[LotoResult] = []
+        unmatched_samples: list[str] = []
+
+        rows = soup.find_all("tr")
+        logger.info(
+            "Fallback row parse started. lottery_type=%s url=%s tr_count=%s",
+            lottery_type,
+            source_url,
+            len(rows),
+        )
+
+        for row in rows:
             row_text = row.get_text(" | ", strip=True)
-            parsed = self._parse_row_text(row_text, lottery_type=lottery_type, source_url=source_url)
+            parsed = self._parse_row_text(
+                row_text,
+                lottery_type=lottery_type,
+                source_url=source_url,
+            )
             if parsed is not None:
                 results.append(parsed)
+            elif len(unmatched_samples) < 5 and row_text:
+                unmatched_samples.append(row_text)
+
+        logger.info(
+            "Fallback row parse finished. lottery_type=%s url=%s parsed_count=%s unmatched_samples=%s",
+            lottery_type,
+            source_url,
+            len(results),
+            unmatched_samples,
+        )
 
         deduped = {result.draw_no: result for result in results}
         return sorted(deduped.values(), key=lambda result: result.draw_no, reverse=True)
@@ -142,6 +286,8 @@ class RakutenLotoClient:
         source_url: str,
     ) -> LotoResult | None:
         normalized = re.sub(r"\s+", " ", row_text).strip()
+
+        # 旧ページ構造向けのフォールバック。
         match = re.match(
             r"第0*(?P<draw_no>\d+)回\s+(?P<draw_date>\d{4}/\d{2}/\d{2})\s*\|\s*(?P<main>[\d ]+)\s*\|\s*(?P<bonus>[\d ]+)$",
             normalized,
@@ -150,8 +296,14 @@ class RakutenLotoClient:
             return None
 
         spec = self.SPECS[lottery_type]
-        main_numbers = self._extract_numbers(match.group("main"), expected_count=spec.pick_count)
-        bonus_numbers = self._extract_numbers(match.group("bonus"), expected_count=spec.bonus_count)
+        main_numbers = self._extract_numbers(
+            match.group("main"),
+            expected_count=spec.pick_count,
+        )
+        bonus_numbers = self._extract_numbers(
+            match.group("bonus"),
+            expected_count=spec.bonus_count,
+        )
         if main_numbers is None or bonus_numbers is None:
             return None
 
@@ -172,6 +324,13 @@ class RakutenLotoClient:
             return None
         return numbers[:expected_count]
 
+    def _normalize_page_text(self, text: str) -> str:
+        normalized = text.replace("\xa0", " ").replace("\u3000", " ")
+        normalized = normalized.replace("（", "(").replace("）", ")")
+        normalized = re.sub(r"[ \t\r\f\v]+", " ", normalized)
+        normalized = re.sub(r"\n+", "\n", normalized)
+        return normalized
+
     def _iter_year_month(
         self,
         start_year: int,
@@ -181,6 +340,7 @@ class RakutenLotoClient:
     ) -> Iterable[tuple[int, int]]:
         year = start_year
         month = start_month
+
         while (year, month) <= (end_year, end_month):
             yield year, month
             if month == 12:
