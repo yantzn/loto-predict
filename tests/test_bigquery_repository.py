@@ -15,14 +15,28 @@ class _FakeBigQueryClient:
     def __init__(self) -> None:
         self.insert_calls: list[tuple[str, list[dict[str, object]]]] = []
         self.query_rows: list[dict[str, object]] = []
+        self.last_query_text: str | None = None
+        self.last_query_job_config = None
 
     def insert_rows_json(self, table_id: str, rows: list[dict[str, object]]):
         self.insert_calls.append((table_id, rows))
         return []
 
-    def query(self, query_text: str):
-        del query_text
+    def query(self, query_text: str, job_config=None):
+        self.last_query_text = query_text
+        self.last_query_job_config = job_config
         return _FakeQueryJob(self.query_rows)
+
+
+def test_fetch_existing_draw_nos_returns_matching_draw_nos() -> None:
+    client = _FakeBigQueryClient()
+    client.query_rows = [{"draw_no": 1001}, {"draw_no": 1003}]
+    repository = _create_repository(client)
+
+    existing_draw_nos = repository.fetch_existing_draw_nos("loto6", [1001, 1002, 1003])
+
+    assert existing_draw_nos == {1001, 1003}
+    assert "draw_no IN UNNEST" in client.last_query_text
 
 
 def _create_repository(client: _FakeBigQueryClient) -> BigQueryLotoRepository:

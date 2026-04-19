@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from io import StringIO
+from uuid import uuid4
 from typing import Any
 
 from src.infrastructure.serializer.loto_csv import serialize_results_to_csv
@@ -13,14 +14,17 @@ class FetchLotoResultsInput:
     lottery_type: str
     output_path: str | None = None
     publish_import_message: bool = True
+    execution_id: str | None = None
 
 
 @dataclass(frozen=True)
 class FetchLotoResultsOutput:
+    execution_id: str
     lottery_type: str
     result_count: int
     output_uri: str
     draw_no: int | None
+    draw_date: str
 
 
 class FetchLotoResultsUseCase:
@@ -32,6 +36,7 @@ class FetchLotoResultsUseCase:
 
     def execute(self, command: FetchLotoResultsInput) -> FetchLotoResultsOutput:
         lottery_type = self._validate_lottery_type(command.lottery_type)
+        execution_id = command.execution_id or str(uuid4())
         latest = self.loto_client.fetch_latest_result(lottery_type)
 
         buffer = StringIO()
@@ -50,16 +55,21 @@ class FetchLotoResultsUseCase:
 
         if command.publish_import_message and self.publisher is not None:
             payload = {
+                "execution_id": execution_id,
                 "lottery_type": lottery_type,
                 "gcs_uri": target_uri,
+                "draw_no": latest.draw_no,
+                "draw_date": latest.draw_date,
             }
             self._publish(payload)
 
         return FetchLotoResultsOutput(
+            execution_id=execution_id,
             lottery_type=lottery_type,
             result_count=1,
             output_uri=output_uri,
             draw_no=latest.draw_no,
+            draw_date=latest.draw_date,
         )
 
     def _publish(self, payload: dict[str, Any]) -> None:

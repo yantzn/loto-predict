@@ -38,11 +38,15 @@ class _FakeBigQueryClient:
 
 
 class _FakePublisher:
+    def __init__(self) -> None:
+        self.published_payloads: list[dict[str, object]] = []
+
     def topic_path(self, project_id: str, topic_name: str) -> str:
         return f"projects/{project_id}/topics/{topic_name}"
 
     def publish(self, topic_path: str, data: bytes):
-        del topic_path, data
+        del topic_path
+        self.published_payloads.append(json.loads(data.decode("utf-8")))
 
         class _Future:
             def result(self):
@@ -64,6 +68,7 @@ def test_import_entry_point_converts_csv_to_insert_rows(monkeypatch) -> None:
     serialize_results_to_csv([result], csv_buffer)
 
     fake_bq_client = _FakeBigQueryClient()
+    fake_publisher = _FakePublisher()
     fake_settings = SimpleNamespace(
         is_local=False,
         gcp=SimpleNamespace(
@@ -76,7 +81,7 @@ def test_import_entry_point_converts_csv_to_insert_rows(monkeypatch) -> None:
     monkeypatch.setattr(import_main, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(import_main, "create_storage_client", lambda settings: _FakeStorageClient(csv_buffer.getvalue()))
     monkeypatch.setattr(import_main.bigquery, "Client", lambda project=None: fake_bq_client)
-    monkeypatch.setattr(import_main.pubsub_v1, "PublisherClient", lambda: _FakePublisher())
+    monkeypatch.setattr(import_main.pubsub_v1, "PublisherClient", lambda: fake_publisher)
 
     payload = {
         "message": {
@@ -99,3 +104,7 @@ def test_import_entry_point_converts_csv_to_insert_rows(monkeypatch) -> None:
     assert fake_bq_client.inserted_rows[0]["draw_no"] == 2094
     assert fake_bq_client.inserted_rows[0]["n6"] == 30
     assert fake_bq_client.inserted_rows[0]["b1"] == 16
+    assert result_payload["execution_id"] == "exec-1"
+    assert result_payload["draw_no"] == 2094
+    assert fake_publisher.published_payloads[0]["execution_id"] == "exec-1"
+    assert fake_publisher.published_payloads[0]["draw_no"] == 2094

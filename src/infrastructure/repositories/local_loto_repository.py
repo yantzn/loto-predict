@@ -66,6 +66,29 @@ class LocalLotoRepository:
             "storage_path": str(path),
         }
 
+    def fetch_existing_draw_nos(self, lottery_type: str, draw_nos: list[int]) -> set[int]:
+        # local でも BigQuery と同じ契約で存在確認できるようにしておくと、
+        # usecase 側が環境差を意識せずに重複排除ロジックを共有できる。
+        target_draw_nos = {int(draw_no) for draw_no in draw_nos if draw_no is not None}
+        if not target_draw_nos:
+            return set()
+
+        path = self._history_path(lottery_type)
+        if not path.exists():
+            return set()
+
+        existing_draw_nos: set[int] = set()
+        with path.open("r", encoding="utf-8") as file_obj:
+            for line in file_obj:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                draw_no = row.get("draw_no")
+                if draw_no is not None and int(draw_no) in target_draw_nos:
+                    existing_draw_nos.add(int(draw_no))
+        return existing_draw_nos
+
     def fetch_recent_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, Any]]:
         # BigQuery実装と同じ契約に合わせ、戻り順は常に draw_no DESC(最新順) に揃える。
         # UseCase側は history_rows[0] を最新回として扱うため、環境差を作らないことが重要。

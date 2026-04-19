@@ -177,36 +177,40 @@ def import_loto_results_to_bq(event, context=None):
                 lottery_type=lottery_type,
                 gcs_uri=gcs_uri,
                 publish_notify_message=True,
+                execution_id=execution_id or None,
             )
         )
 
         _log_execution(
-            execution_id=execution_id or "unknown",
+            execution_id=result.execution_id,
             lottery_type=result.lottery_type,
             stage="import",
             status="SUCCESS",
             message=(
-                f"total_rows={result.total_rows} inserted_rows={result.inserted_rows} "
+                f"draw_no={result.draw_no} total_rows={result.total_rows} inserted_rows={result.inserted_rows} "
                 f"skipped_rows={result.skipped_rows} gcs_uri={result.gcs_uri}"
             ),
         )
 
         logger.info(
-            "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s total=%s inserted=%s skipped=%s",
-            execution_id,
+            "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s draw_no=%s total=%s inserted=%s skipped=%s",
+            result.execution_id,
             result.lottery_type,
+            result.draw_no,
             result.total_rows,
             result.inserted_rows,
             result.skipped_rows,
         )
         return {
             "status": "ok",
-            "execution_id": execution_id,
+            "execution_id": result.execution_id,
             "lottery_type": result.lottery_type,
             "total_rows": result.total_rows,
             "inserted_rows": result.inserted_rows,
             "skipped_rows": result.skipped_rows,
             "gcs_uri": result.gcs_uri,
+            "draw_no": result.draw_no,
+            "draw_date": result.draw_date,
         }
     except Exception as exc:
         _log_execution(

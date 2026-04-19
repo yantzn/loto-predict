@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from uuid import uuid4
 from dataclasses import dataclass
 from io import StringIO
 from typing import Any
@@ -12,15 +13,19 @@ class ImportLotoResultsInput:
     lottery_type: str
     gcs_uri: str
     publish_notify_message: bool = True
+    execution_id: str | None = None
 
 
 @dataclass(frozen=True)
 class ImportLotoResultsOutput:
+    execution_id: str
     lottery_type: str
     total_rows: int
     inserted_rows: int
     skipped_rows: int
     gcs_uri: str
+    draw_no: int | None = None
+    draw_date: str | None = None
 
 
 class ImportLotoResultsToBQUseCase:
@@ -32,6 +37,7 @@ class ImportLotoResultsToBQUseCase:
 
     def execute(self, command: ImportLotoResultsInput) -> ImportLotoResultsOutput:
         lottery_type = self._validate_lottery_type(command.lottery_type)
+        execution_id = command.execution_id or str(uuid4())
         bucket_name, blob_name = self._parse_gcs_uri(command.gcs_uri)
 
         csv_text = self._download_csv_text(bucket_name, blob_name)
@@ -43,12 +49,17 @@ class ImportLotoResultsToBQUseCase:
         if not filtered_rows:
             raise ValueError(f"No rows matched lottery_type={lottery_type}")
 
-        recent_rows = self.repository.fetch_recent_history_rows(lottery_type=lottery_type, limit=5000)
-        existing_draw_nos = {
-            int(row.get("draw_no"))
-            for row in recent_rows
-            if row.get("draw_no") is not None
-        }
+        draw_nos = [int(row["draw_no"]) for row in filtered_rows if row.get("draw_no") is not None]
+        if hasattr(self.repository, "fetch_existing_draw_nos"):
+            existing_draw_nos = self.repository.fetch_existing_draw_nos(lottery_type=lottery_type, draw_nos=draw_nos)
+        else:
+            # 互換性確保のためのフォールバック。BigQuery 実装が新メソッドを持つ場合はそちらを優先する。
+            recent_rows = self.repository.fetch_recent_history_rows(lottery_type=lottery_type, limit=5000)
+            existing_draw_nos = {
+                int(row.get("draw_no"))
+                for row in recent_rows
+                if row.get("draw_no") is not None
+            }
 
         insert_rows = [
             row
@@ -62,16 +73,28 @@ class ImportLotoResultsToBQUseCase:
             inserted_count = int(result.get("inserted_rows") or len(insert_rows))
 
         skipped_count = len(filtered_rows) - inserted_count
+        latest_row = max(filtered_rows, key=lambda row: int(row.get("draw_no") or 0))
 
         if command.publish_notify_message and self.publisher is not None:
-            self._publish({"lottery_type": lottery_type})
+            self._publish(
+                {
+                    "execution_id": execution_id,
+                    "lottery_type": lottery_type,
+                    "gcs_uri": command.gcs_uri,
+                    "draw_no": latest_row.get("draw_no"),
+                    "draw_date": latest_row.get("draw_date"),
+                }
+            )
 
         return ImportLotoResultsOutput(
+            execution_id=execution_id,
             lottery_type=lottery_type,
             total_rows=len(filtered_rows),
             inserted_rows=inserted_count,
             skipped_rows=skipped_count,
             gcs_uri=command.gcs_uri,
+            draw_no=int(latest_row["draw_no"]) if latest_row.get("draw_no") is not None else None,
+            draw_date=latest_row.get("draw_date") or None,
         )
 
     def _download_csv_text(self, bucket_name: str, blob_name: str) -> str:

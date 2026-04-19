@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from google.cloud import bigquery
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +48,25 @@ class BigQueryLotoRepository:
             "skipped_as_duplicate": False,
             "table_id": table_id,
         }
+
+    def fetch_existing_draw_nos(self, lottery_type: str, draw_nos: list[int]) -> set[int]:
+        # backfill や再実行時の安全性を上げるため、履歴全件取得ではなく
+        # 対象 draw_no の存在確認だけを BigQuery に投げて重複混入を防ぐ。
+        normalized_draw_nos = [int(draw_no) for draw_no in draw_nos if draw_no is not None]
+        if not normalized_draw_nos:
+            return set()
+
+        table_id = self._table_id(lottery_type)
+        query = f"""
+SELECT draw_no
+FROM `{table_id}`
+WHERE draw_no IN UNNEST(@draw_nos)
+"""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ArrayQueryParameter("draw_nos", "INT64", normalized_draw_nos)]
+        )
+        rows = self.bq_client.query(query, job_config=job_config).result()
+        return {int(row["draw_no"]) for row in rows}
 
     def fetch_recent_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, Any]]:
         # 返却順は draw_no DESC(最新順) を契約とする。

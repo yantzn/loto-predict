@@ -49,13 +49,13 @@ generate_prediction_and_notify
   - 最新当せん結果取得
   - CSV正規化
   - GCS保存
-  - importトピック publish
+  - importトピック publish（`execution_id`, `lottery_type`, `gcs_uri`, `draw_no`, `draw_date` を付与）
 - `import_loto_results_to_bq`:
   - GCS CSV読込
   - CSV行パース
   - draw_no 重複除外
   - BigQuery投入
-  - notifyトピック publish
+  - notifyトピック publish（`execution_id`, `lottery_type`, `gcs_uri`, `draw_no`, `draw_date` を付与）
 - `generate_prediction_and_notify`:
   - Pub/Subデコード・入力検証
   - repository / LINE client 生成
@@ -96,6 +96,7 @@ generate_prediction_and_notify
 - 同一実行内で同一組合せは再利用しません（集合比較で重複判定）。
 - 1口内の表示順は「スコア降順・同点は番号昇順」です。
 - 生成要求が組合せ総数を超える場合は `ValueError` を返します。
+- 通知本文には回号（`draw_no`）と日本時間（`APP_TIMEZONE`、既定は `Asia/Tokyo`）を表示します。
 
 ### ローカル実行
 

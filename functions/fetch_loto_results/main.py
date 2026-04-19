@@ -141,23 +141,24 @@ def fetch_loto_results(request):
             FetchLotoResultsInput(
                 lottery_type=lottery_type,
                 publish_import_message=True,
+                execution_id=execution_id,
             )
         )
 
         _log_execution(
-            execution_id=execution_id,
+            execution_id=result.execution_id,
             lottery_type=lottery_type,
             stage="fetch",
             status="SUCCESS",
             # prediction_runs ではなく execution_logs に Function 成否を残すことで、
             # 入出力未確定の失敗時でも監査線を維持できる。
-            message=f"result_count={result.result_count} output_uri={result.output_uri}",
+            message=f"result_count={result.result_count} draw_no={result.draw_no} output_uri={result.output_uri}",
             draw_no=result.draw_no,
         )
 
         logger.info(
             "fetch_loto_results completed. execution_id=%s lottery_type=%s draw_no=%s output_uri=%s",
-            execution_id,
+            result.execution_id,
             lottery_type,
             result.draw_no,
             result.output_uri,
@@ -165,9 +166,10 @@ def fetch_loto_results(request):
         return _json_response(
             {
                 "status": "ok",
-                "execution_id": execution_id,
+                "execution_id": result.execution_id,
                 "lottery_type": result.lottery_type,
                 "draw_no": result.draw_no,
+                "draw_date": result.draw_date,
                 "result_count": result.result_count,
                 "output_uri": result.output_uri,
             }

@@ -54,7 +54,21 @@ def _build_usecase(settings, notify_enabled: bool):
     bq_client = None if settings.is_local else bigquery.Client(project=settings.gcp.project_id or None)
     repository = create_loto_repository(bq_client=bq_client)
     line_client = LineClient(settings.line.channel_access_token) if notify_enabled else NoopLineClient()
-    return GenerateAndNotifyUseCase(repository=repository, line_client=line_client, logger=logger)
+    return GenerateAndNotifyUseCase(
+        repository=repository,
+        line_client=line_client,
+        logger=logger,
+        timezone_name=getattr(settings, "app_timezone", "Asia/Tokyo"),
+    )
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def generate_prediction_and_notify(event, context=None):
@@ -70,6 +84,9 @@ def generate_prediction_and_notify(event, context=None):
         lottery_type = str(message.get("lottery_type") or "").strip().lower()
         if lottery_type not in {"loto6", "loto7"}:
             raise ValueError("lottery_type must be loto6 or loto7")
+
+        latest_draw_no = _coerce_optional_int(message.get("draw_no"))
+        latest_draw_date = str(message.get("draw_date") or "").strip() or None
 
         # local 検証でも LINE 実送信を選べるように、明示フラグがある場合はそれを優先する。
         notify_enabled = bool(message.get("notify", not settings.is_local))
@@ -99,6 +116,8 @@ def generate_prediction_and_notify(event, context=None):
             line_user_id=settings.line.user_id or "",
             notify_enabled=notify_enabled,
             execution_id=execution_id,
+            latest_draw_no=latest_draw_no,
+            latest_draw_date=latest_draw_date,
         )
 
         write_execution_log(
@@ -108,15 +127,17 @@ def generate_prediction_and_notify(event, context=None):
             stage="generate_notify",
             status="SUCCESS",
             message=(
-                f"history_count={result['history_count']} prediction_count={result['prediction_count']} "
+                f"draw_no={result.get('latest_draw_no')} draw_date={result.get('latest_draw_date')} history_count={result['history_count']} prediction_count={result['prediction_count']} "
                 f"message_sent={notify_enabled}"
             ),
         )
 
         logger.info(
-            "generate_prediction_and_notify completed. execution_id=%s lottery_type=%s history_count=%s prediction_count=%s",
+            "generate_prediction_and_notify completed. execution_id=%s lottery_type=%s draw_no=%s draw_date=%s history_count=%s prediction_count=%s",
             execution_id,
             lottery_type,
+            result.get("latest_draw_no"),
+            result.get("latest_draw_date"),
             result["history_count"],
             result["prediction_count"],
         )

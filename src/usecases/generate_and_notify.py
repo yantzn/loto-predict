@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import uuid4
 
 from src.domain.prediction import generate_predictions
@@ -8,10 +9,11 @@ from src.domain.statistics import calculate_number_scores
 
 
 class GenerateAndNotifyUseCase:
-    def __init__(self, repository, line_client, logger) -> None:
+    def __init__(self, repository, line_client, logger, timezone_name: str = "Asia/Tokyo") -> None:
         self.repository = repository
         self.line_client = line_client
         self.logger = logger
+        self.timezone_name = timezone_name
 
     def execute(
         self,
@@ -21,6 +23,8 @@ class GenerateAndNotifyUseCase:
         line_user_id: str,
         notify_enabled: bool = True,
         execution_id: str | None = None,
+        latest_draw_no: int | None = None,
+        latest_draw_date: str | None = None,
     ) -> dict[str, object]:
         # 何をするか:
         # - 履歴取得 -> 予想生成 -> LINE通知 -> 実行記録保存 を1トランザクションとして扱う。
@@ -51,6 +55,8 @@ class GenerateAndNotifyUseCase:
         try:
             draws = self._extract_draws(history_rows, normalized_lottery_type)
             number_scores = calculate_number_scores(draws)
+            resolved_draw_no = latest_draw_no if latest_draw_no is not None else self._latest_draw_no(history_rows)
+            resolved_draw_date = latest_draw_date if latest_draw_date is not None else self._latest_draw_date(history_rows)
 
             # 統計スコア算出と予想生成は domain 層へ委譲し、usecase はオーケストレーションに専念する。
             predictions = generate_predictions(
@@ -58,7 +64,7 @@ class GenerateAndNotifyUseCase:
                 lottery_type=normalized_lottery_type,
                 prediction_count=prediction_count,
             )
-            message = self._build_message(normalized_lottery_type, len(history_rows), predictions)
+            message = self._build_message(normalized_lottery_type, resolved_draw_no, len(history_rows), predictions)
             if notify_enabled:
                 self._send_line_message(line_user_id, message)
 
@@ -77,7 +83,8 @@ class GenerateAndNotifyUseCase:
                 "predictions": predictions,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "status": "SUCCESS" if notify_enabled else "DRY_RUN",
-                "latest_draw_no": history_rows[0].get("draw_no"),
+                "latest_draw_no": resolved_draw_no,
+                "draw_date": resolved_draw_date,
             }
             self.repository.save_prediction_run(run_payload)
 
@@ -94,6 +101,8 @@ class GenerateAndNotifyUseCase:
                 "prediction_count": len(predictions),
                 "predictions": predictions,
                 "message": message,
+                "latest_draw_no": resolved_draw_no,
+                "latest_draw_date": resolved_draw_date,
             }
         except Exception as exc:
             # 失敗時の監査は execution_logs 側を主に使う前提。
@@ -111,7 +120,8 @@ class GenerateAndNotifyUseCase:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "status": "FAILED",
                 "error_message": str(exc),
-                "latest_draw_no": history_rows[0].get("draw_no"),
+                "latest_draw_no": self._latest_draw_no(history_rows),
+                "draw_date": self._latest_draw_date(history_rows),
             }
             if failure_payload["predictions"]:
                 try:
@@ -129,10 +139,22 @@ class GenerateAndNotifyUseCase:
                 "FAILED",
                 execution_id,
                 normalized_lottery_type,
-                history_rows[0].get("draw_no"),
+                self._latest_draw_no(history_rows),
                 str(exc),
             )
             raise
+
+    def _latest_draw_no(self, history_rows: list[dict[str, object]]) -> int | None:
+        if not history_rows:
+            return None
+        draw_no = history_rows[0].get("draw_no")
+        return int(draw_no) if draw_no is not None else None
+
+    def _latest_draw_date(self, history_rows: list[dict[str, object]]) -> str | None:
+        if not history_rows:
+            return None
+        draw_date = history_rows[0].get("draw_date")
+        return str(draw_date) if draw_date is not None else None
 
     def _fetch_history_rows(self, lottery_type: str, limit: int) -> list[dict[str, object]]:
         # 新旧repository実装の差分をここで吸収し、上位の処理を単純化する。
@@ -170,13 +192,16 @@ class GenerateAndNotifyUseCase:
     def _build_message(
         self,
         lottery_type: str,
+        draw_no: int | None,
         history_count: int,
         predictions: list[list[int]],
     ) -> str:
         # 人が読みやすい本文形式へ整形し、通知文面を一箇所で管理する。
-        now_text = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        now_text = datetime.now(self._resolve_timezone()).strftime("%Y-%m-%d %H:%M:%S")
+        draw_no_text = f"第{draw_no}回" if draw_no is not None else "回号不明"
         lines = [
             f"{lottery_type.upper()} 予想",
+            f"回号: {draw_no_text}",
             f"実行日時: {now_text}",
             f"対象履歴: 直近{history_count}件",
             f"予想口数: {len(predictions)}口",
@@ -185,3 +210,12 @@ class GenerateAndNotifyUseCase:
         for index, numbers in enumerate(predictions, start=1):
             lines.append(f"{index}口目: {' '.join(str(number) for number in numbers)}")
         return "\n".join(lines)
+
+    def _resolve_timezone(self):
+        # Windows や CI などで zoneinfo データが無い環境でも、通知時刻を JST 表示で維持する。
+        try:
+            return ZoneInfo(self.timezone_name)
+        except ZoneInfoNotFoundError:
+            if self.timezone_name == "Asia/Tokyo":
+                return timezone(timedelta(hours=9))
+            return timezone.utc
