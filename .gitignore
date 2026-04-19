@@ -13,3 +13,5 @@ __pycache__/
 local_storage/raw/
 local_storage/imported/
 local_storage/backfill/
+local_storage/loto6/
+local_storage/loto7/

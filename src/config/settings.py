@@ -1,9 +1,48 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
+
+
+_LOCAL_ENV_LOADED = False
+
+
+def _load_local_env_file() -> None:
+    global _LOCAL_ENV_LOADED
+    if _LOCAL_ENV_LOADED:
+        return
+
+    # pytest 実行時はテスト側の環境制御を優先し、ローカル .env の自動注入で
+    # 期待値が変わらないようにする。
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        _LOCAL_ENV_LOADED = True
+        return
+
+    root_dir = Path(__file__).resolve().parents[2]
+    env_path = root_dir / ".env.local"
+    if not env_path.exists():
+        _LOCAL_ENV_LOADED = True
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+
+        # 実行時に明示された環境変数を最優先し、.env.local は不足分だけ補完する。
+        if os.getenv(key) is None:
+            os.environ[key] = value
+
+    _LOCAL_ENV_LOADED = True
 
 
 def _first_env(*names: str, default: Optional[str] = None) -> Optional[str]:
@@ -120,6 +159,8 @@ def require_line_settings(settings: AppSettings) -> None:
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
+    _load_local_env_file()
+
     app_env = _first_env("APP_ENV", default="local") or "local"
     app_timezone = _first_env("APP_TIMEZONE", default="Asia/Tokyo") or "Asia/Tokyo"
     default_stats_target_draws = _to_int(_first_env("STATS_TARGET_DRAWS"), 100)

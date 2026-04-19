@@ -61,15 +61,11 @@ class RakutenLotoClient:
 
         try:
             html = self._fetch_html(url)
-            results = self._parse_results_from_html(
+            latest = self._parse_latest_result_from_html(
                 html=html,
                 lottery_type=normalized,
                 source_url=url,
             )
-            if not results:
-                raise ValueError(f"latest result not found: lottery_type={normalized}")
-
-            latest = max(results, key=lambda result: result.draw_no)
             latest.validate()
             return latest
         except Exception:
@@ -79,6 +75,108 @@ class RakutenLotoClient:
                 url,
             )
             raise
+
+    def _parse_latest_result_from_html(
+        self,
+        html: str,
+        lottery_type: str,
+        source_url: str,
+    ) -> LotoResult:
+        # latest は monthly と HTML 構造が異なるため専用パスに分ける。
+        # monthly 側の抽出ロジックを無理に共通化すると、backfill 成功パターンを壊しやすい。
+        soup = BeautifulSoup(html, "html.parser")
+        rows = soup.find_all("tr")
+
+        candidate_samples: list[str] = []
+        unexpected_samples: list[str] = []
+        logger.info(
+            "Latest parse started. lottery_type=%s url=%s tr_count=%s",
+            lottery_type,
+            source_url,
+            len(rows),
+        )
+
+        for row in rows:
+            row_text = row.get_text(" | ", strip=True)
+            if not row_text:
+                continue
+
+            if row_text.startswith("第") and len(candidate_samples) < 5:
+                candidate_samples.append(row_text)
+
+            parsed = self._parse_latest_row_text(row_text, lottery_type, source_url)
+            if parsed is not None:
+                logger.info(
+                    "Latest parse succeeded. lottery_type=%s url=%s draw_no=%s candidates=%s",
+                    lottery_type,
+                    source_url,
+                    parsed.draw_no,
+                    candidate_samples,
+                )
+                return parsed
+
+            if row_text.startswith("第") and len(unexpected_samples) < 5:
+                parts = [part.strip() for part in row_text.split("|") if part.strip()]
+                unexpected_samples.append(f"parts={len(parts)} text={row_text}")
+
+        logger.info(
+            "Latest parse failed. lottery_type=%s url=%s candidates=%s unexpected_parts=%s",
+            lottery_type,
+            source_url,
+            candidate_samples,
+            unexpected_samples,
+        )
+        raise ValueError(f"latest result not found: lottery_type={lottery_type}")
+
+    def _parse_latest_row_text(
+        self,
+        row_text: str,
+        lottery_type: str,
+        source_url: str,
+    ) -> LotoResult | None:
+        if not row_text.startswith("第"):
+            return None
+
+        parts = [part.strip() for part in row_text.split("|") if part.strip()]
+        if len(parts) < 3:
+            return None
+
+        draw_match = re.match(r"^第0*(\d+)回$", parts[0])
+        if draw_match is None:
+            return None
+
+        draw_no = int(draw_match.group(1))
+        draw_date = parts[1].replace("/", "-")
+
+        try:
+            if lottery_type == "loto6":
+                # latest は「第回 | 日付 | 本数字6個 | ボーナス1個」が基本。
+                # 8/9 列揺れに備え、必要個数を満たすかで判定する。
+                if len(parts) not in {8, 9}:
+                    return None
+                if len(parts[2:]) < 7:
+                    return None
+                main_numbers = [int(value) for value in parts[2:8]]
+                bonus_numbers = [int(parts[8])] if len(parts) >= 9 else [int(parts[-1])]
+            else:
+                # loto7 latest は「第回 | 日付 | 本数字7個 | ボーナス2個」が基本。
+                if len(parts) < 11:
+                    return None
+                main_numbers = [int(value) for value in parts[2:9]]
+                bonus_numbers = [int(value) for value in parts[9:11]]
+        except ValueError:
+            return None
+
+        result = LotoResult(
+            lottery_type=lottery_type,
+            draw_no=draw_no,
+            draw_date=draw_date,
+            main_numbers=main_numbers,
+            bonus_numbers=bonus_numbers,
+            source_url=source_url,
+        )
+        result.validate()
+        return result
 
     def fetch_history(
         self,

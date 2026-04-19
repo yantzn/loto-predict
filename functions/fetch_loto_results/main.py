@@ -5,10 +5,8 @@ import logging
 import os
 import sys
 import uuid
-from io import StringIO
+import argparse
 from pathlib import Path
-
-from google.cloud import pubsub_v1
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parents[1]
@@ -18,30 +16,85 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.config.settings import get_settings
 from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.rakuten_loto import RakutenLotoClient
-from src.infrastructure.serializer.loto_csv import serialize_results_to_csv
+from src.usecases.fetch_loto_results import FetchLotoResultsInput, FetchLotoResultsUseCase
 
 try:
     from common.execution_log import write_execution_log
 except ImportError:
-    from functions.common.execution_log import write_execution_log
+    try:
+        from functions.common.execution_log import write_execution_log
+    except ImportError:
+        def write_execution_log(**kwargs):
+            del kwargs
+            return None
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
+def _log_execution(*, execution_id: str, lottery_type: str | None, stage: str, status: str, message: str, draw_no: int | None = None, error_type: str | None = None, error_detail: str | None = None) -> None:
+    # local では監査用 env が未設定でも本体処理を止めないことを優先する。
+    # write 失敗をここで吸収しないと、fetch 本体の真因より先に監査失敗ログが目立って調査しづらくなる。
+    project_id = os.getenv("GCP_PROJECT_ID")
+    dataset_id = os.getenv("BQ_DATASET") or os.getenv("BIGQUERY_DATASET")
+    if not project_id or not dataset_id:
+        logger.warning(
+            "execution log write skipped due to missing env. execution_id=%s stage=%s status=%s",
+            execution_id,
+            stage,
+            status,
+        )
+        return
+
+    try:
+        write_execution_log(
+            execution_id=execution_id,
+            function_name="fetch_loto_results",
+            lottery_type=lottery_type,
+            stage=stage,
+            status=status,
+            message=message,
+            draw_no=draw_no,
+            error_type=error_type,
+            error_detail=error_detail,
+        )
+    except Exception as exc:
+        logger.warning(
+            "execution log write skipped/failed. execution_id=%s stage=%s status=%s error=%s",
+            execution_id,
+            stage,
+            status,
+            str(exc),
+        )
+
+
+class _PubSubPublisher:
+    def __init__(self, project_id: str, topic_name: str) -> None:
+        from google.cloud import pubsub_v1
+
+        self._publisher = pubsub_v1.PublisherClient()
+        self._topic_path = self._publisher.topic_path(project_id, topic_name)
+
+    def publish_json(self, payload: dict[str, object]) -> str:
+        future = self._publisher.publish(self._topic_path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        return str(future.result())
+
+
+class _NoopPublisher:
+    def publish_json(self, payload: dict[str, object]) -> str:
+        logger.info("Skip Pub/Sub publish in local mode. payload=%s", payload)
+        return "local-skip"
+
+
 def _json_response(payload: dict[str, object], status_code: int = 200):
-    # HTTP関数として呼ばれるため、戻り値は常にJSONレスポンス形式へ統一する。
-    return (
-        json.dumps(payload, ensure_ascii=False),
-        status_code,
-        {"Content-Type": "application/json; charset=utf-8"},
-    )
+    return payload, status_code
 
 
 def _extract_lottery_type(request) -> str:
-    # body / query の両方から受け付けることで、手動実行と自動実行の両運用を許容する。
+    # local runner と Function 実行で同じ usecase を使うため、
+    # request 側の差分は entry point 内で閉じ込める。
     body = request.get_json(silent=True) or {}
-    lottery_type = body.get("lottery_type") or request.args.get("lottery_type")
+    lottery_type = body.get("lottery_type") or request.args.get("lottery_type") or "loto6"
     if not lottery_type:
         raise ValueError("lottery_type is required")
 
@@ -58,54 +111,24 @@ def _extract_execution_id(request) -> str:
     return str(execution_id).strip() if execution_id else str(uuid.uuid4())
 
 
-def _build_object_name(lottery_type: str, draw_no: int, draw_date: str, execution_id: str) -> str:
-    # 日付/回号/実行IDをパスに含め、再実行時の衝突回避と監査容易性を確保する。
-    return f"{lottery_type}/draw_date={draw_date}/draw_no={draw_no}/execution_id={execution_id}.csv"
+def _build_usecase(settings):
+    publisher = _NoopPublisher()
+    if not settings.is_local:
+        if not settings.gcp.project_id:
+            raise ValueError("GCP_PROJECT_ID is required in non-local mode")
+        publisher = _PubSubPublisher(settings.gcp.project_id, settings.gcp.import_topic_name)
+
+    return FetchLotoResultsUseCase(
+        settings=settings,
+        loto_client=RakutenLotoClient(),
+        storage_client=create_storage_client(settings),
+        publisher=publisher,
+    )
 
 
-def _publish_import_message(
-    *,
-    execution_id: str,
-    lottery_type: str,
-    gcs_bucket: str,
-    gcs_object: str,
-    draw_no: int,
-    draw_date: str,
-) -> str:
-    settings = get_settings()
-    if settings.is_local:
-        # ローカルではPub/Sub連携を行わず、ファイル保存までを確認対象にする。
-        logger.info(
-            "Skip Pub/Sub publish in local mode. execution_id=%s lottery_type=%s gcs_object=%s",
-            execution_id,
-            lottery_type,
-            gcs_object,
-        )
-        return "local-skip"
-
-    if not settings.gcp.project_id:
-        raise ValueError("GCP_PROJECT_ID is required in non-local mode")
-
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(settings.gcp.project_id, settings.gcp.import_topic_name)
-    payload = {
-        "event_type": "FETCH_COMPLETED",
-        "execution_id": execution_id,
-        "lottery_type": lottery_type,
-        "gcs_bucket": gcs_bucket,
-        "gcs_object": gcs_object,
-        "draw_no": draw_no,
-        "draw_date": draw_date,
-    }
-    future = publisher.publish(topic_path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-    return future.result()
-
-
-def entry_point(request):
-    # fetch関数の責務:
-    # 1) 最新結果を取得
-    # 2) CSVに正規化して保存
-    # 3) import関数へイベント連携
+def fetch_loto_results(request):
+    # request の解釈だけを Function 層に閉じ、業務処理を usecase へ寄せることで
+    # ローカル runner と本番 Function のコードパスを一致させる。
     execution_id = str(uuid.uuid4())
     lottery_type: str | None = None
     try:
@@ -113,74 +136,45 @@ def entry_point(request):
         lottery_type = _extract_lottery_type(request)
         execution_id = _extract_execution_id(request)
 
-        if not settings.is_local and not settings.gcp.raw_bucket_name:
-            raise ValueError("GCS_BUCKET_RAW is required in non-local mode")
-
-        client = RakutenLotoClient()
-        result = client.fetch_latest_result(lottery_type)
-
-        # downstream(import)と同じCSV契約に揃えるため、ここで単一レコードでもCSV化する。
-        buffer = StringIO()
-        serialize_results_to_csv([result], buffer)
-        csv_text = buffer.getvalue()
-
-        storage_client = create_storage_client(settings)
-        gcs_bucket = settings.gcp.raw_bucket_name or "local-raw"
-        gcs_object = _build_object_name(lottery_type, result.draw_no, result.draw_date, execution_id)
-        gcs_uri = storage_client.upload_bytes(
-            bucket_name=gcs_bucket,
-            blob_name=gcs_object,
-            payload=csv_text.encode("utf-8"),
-            content_type="text/csv; charset=utf-8",
+        usecase = _build_usecase(settings)
+        result = usecase.execute(
+            FetchLotoResultsInput(
+                lottery_type=lottery_type,
+                publish_import_message=True,
+            )
         )
 
-        publish_result = _publish_import_message(
+        _log_execution(
             execution_id=execution_id,
-            lottery_type=lottery_type,
-            gcs_bucket=gcs_bucket,
-            gcs_object=gcs_object,
-            draw_no=result.draw_no,
-            draw_date=result.draw_date,
-        )
-
-        write_execution_log(
-            execution_id=execution_id,
-            function_name="fetch_loto_results",
             lottery_type=lottery_type,
             stage="fetch",
             status="SUCCESS",
-            # 実行監査では処理件数を残すと障害時の切り分けが速いため、要約を message に含める。
-            message=f"draw_no={result.draw_no} processed_count=1 gcs_object={gcs_object}",
-            gcs_bucket=gcs_bucket,
-            gcs_object=gcs_object,
+            # prediction_runs ではなく execution_logs に Function 成否を残すことで、
+            # 入出力未確定の失敗時でも監査線を維持できる。
+            message=f"result_count={result.result_count} output_uri={result.output_uri}",
             draw_no=result.draw_no,
         )
 
         logger.info(
-            "fetch_loto_results completed. execution_id=%s lottery_type=%s draw_no=%s gcs_bucket=%s gcs_object=%s",
+            "fetch_loto_results completed. execution_id=%s lottery_type=%s draw_no=%s output_uri=%s",
             execution_id,
             lottery_type,
             result.draw_no,
-            gcs_bucket,
-            gcs_object,
+            result.output_uri,
         )
         return _json_response(
             {
                 "status": "ok",
                 "execution_id": execution_id,
-                "lottery_type": lottery_type,
+                "lottery_type": result.lottery_type,
                 "draw_no": result.draw_no,
-                "draw_date": result.draw_date,
-                "gcs_bucket": gcs_bucket,
-                "gcs_object": gcs_object,
-                "gcs_uri": gcs_uri,
-                "pubsub_message_id": publish_result,
+                "result_count": result.result_count,
+                "output_uri": result.output_uri,
             }
         )
     except Exception as exc:
-        write_execution_log(
+        _log_execution(
             execution_id=execution_id,
-            function_name="fetch_loto_results",
             lottery_type=lottery_type,
             stage="fetch",
             status="FAILED",
@@ -195,3 +189,25 @@ def entry_point(request):
             str(exc),
         )
         raise
+
+
+def entry_point(request):
+    return fetch_loto_results(request)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run fetch_loto_results locally")
+    parser.add_argument("--lottery-type", choices=["loto6", "loto7"], default="loto6")
+    args = parser.parse_args()
+
+    class _DummyRequest:
+        def __init__(self, lottery_type: str) -> None:
+            self.args = {"lottery_type": lottery_type}
+
+        def get_json(self, silent: bool = True):
+            del silent
+            return {}
+
+    response = fetch_loto_results(_DummyRequest(args.lottery_type))
+    print(f"status_code={response[1]}")
+    print(json.dumps(response[0], ensure_ascii=False, indent=2))
