@@ -81,19 +81,19 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
     environment_variables = {
       # import は history テーブルへ直接投入する前提。
       # ここで渡すテーブル名は generate 側・repository 側と一致させること。
-      APP_ENV                   = "gcp"
-      APP_TIMEZONE              = var.app_timezone
-      BQ_DATASET                = google_bigquery_dataset.dataset.dataset_id
-      BQ_TABLE_EXECUTION_LOGS   = google_bigquery_table.execution_logs.table_id
-      BQ_TABLE_LOTO6_HISTORY    = google_bigquery_table.loto6_history.table_id
-      BQ_TABLE_LOTO7_HISTORY    = google_bigquery_table.loto7_history.table_id
-      BQ_TABLE_PREDICTION_RUNS  = google_bigquery_table.prediction_runs.table_id
-      GCP_PROJECT_ID            = var.project_id
-      GCP_REGION                = var.region
-      GCS_BUCKET_RAW            = google_storage_bucket.raw_bucket.name
-      PUBSUB_NOTIFY_TOPIC       = google_pubsub_topic.notify_requests.name
-      LOG_LEVEL                 = var.log_level
-      LOG_EXECUTION_ID          = "true"
+      APP_ENV                  = "gcp"
+      APP_TIMEZONE             = var.app_timezone
+      BQ_DATASET               = google_bigquery_dataset.dataset.dataset_id
+      BQ_TABLE_EXECUTION_LOGS  = google_bigquery_table.execution_logs.table_id
+      BQ_TABLE_LOTO6_HISTORY   = google_bigquery_table.loto6_history.table_id
+      BQ_TABLE_LOTO7_HISTORY   = google_bigquery_table.loto7_history.table_id
+      BQ_TABLE_PREDICTION_RUNS = google_bigquery_table.prediction_runs.table_id
+      GCP_PROJECT_ID           = var.project_id
+      GCP_REGION               = var.region
+      GCS_BUCKET_RAW           = google_storage_bucket.raw_bucket.name
+      PUBSUB_NOTIFY_TOPIC      = google_pubsub_topic.notify_requests.name
+      LOG_LEVEL                = var.log_level
+      LOG_EXECUTION_ID         = "true"
     }
   }
 
