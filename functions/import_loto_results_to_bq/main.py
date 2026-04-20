@@ -11,7 +11,8 @@ from pathlib import Path
 from google.cloud import bigquery, pubsub_v1
 
 CURRENT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CURRENT_DIR.parents[1]
+# Cloud Functions 配布時(/workspace)とローカル実行時の両方で src ルートを解決する。
+PROJECT_ROOT = next((p for p in (CURRENT_DIR, *CURRENT_DIR.parents) if (p / "src").is_dir()), CURRENT_DIR)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
