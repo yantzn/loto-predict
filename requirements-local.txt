@@ -1,0 +1,2 @@
+-r requirements-base.txt
+functions-framework>=3.8.0

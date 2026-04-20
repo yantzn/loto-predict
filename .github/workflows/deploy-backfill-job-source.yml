@@ -1,0 +1,109 @@
+
+name: Deploy Backfill Job Source # Cloud Run Job (backfill) のデプロイ用ワークフロー
+
+on:
+  # mainブランチへのpushや手動実行で発火
+  push:
+    branches:
+      - main
+    paths:
+      # バックフィルジョブや依存コード・スクリプト・ワークフローの変更時にのみ発火
+      - "jobs/backfill_loto_history/**"
+      - "src/**"
+      - "requirements-base.txt"
+      - ".github/scripts/sync_job_requirements.sh"
+      - ".github/scripts/terraform_infra_wait.py"
+      - ".github/workflows/deploy-backfill-job-source.yml"
+  workflow_dispatch:
+
+permissions:
+  # OIDC認証やリポジトリ参照用
+  contents: read
+  id-token: write
+  actions: read
+
+concurrency:
+  # 同一ブランチでの同時デプロイ競合防止
+  group: app-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # GCPプロジェクト・リージョン・ジョブ名等の環境変数
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  JOB_NAME: backfill-loto-history
+  BACKFILL_DEFAULT_LOTTERY_TYPE: ${{ vars.BACKFILL_DEFAULT_LOTTERY_TYPE || 'loto6' }}
+  BACKFILL_DEFAULT_START_DATE: ${{ vars.BACKFILL_DEFAULT_START_DATE || '2026-01-01' }}
+  BACKFILL_DEFAULT_END_DATE: ${{ vars.BACKFILL_DEFAULT_END_DATE || '2026-12-31' }}
+  BACKFILL_DEFAULT_OUTPUT_PATH: ${{ vars.BACKFILL_DEFAULT_OUTPUT_PATH || '' }}
+
+jobs:
+  # まずTerraform Infraワークフローの競合を回避
+  wait-for-terraform:
+    # 他のTerraform Infraワークフローが終わるまで待機
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wait until Terraform Infra is idle on this branch # 競合防止
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking Terraform Infra runs on branch=${BRANCH}"
+          python .github/scripts/terraform_infra_wait.py
+
+  deploy:
+    # Cloud Run Jobのデプロイ本体
+    needs: wait-for-terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required variables # GCP変数の未設定チェック
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}"
+          test -n "${GCP_REGION}"
+
+      - name: Authenticate to Google Cloud # OIDC認証
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud # gcloud CLIセットアップ
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Generate job requirements.txt # 依存requirements生成
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./.github/scripts/sync_job_requirements.sh
+          bash ./.github/scripts/sync_job_requirements.sh
+
+      - name: Deploy Cloud Run Job from source # Cloud Run Jobデプロイ
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT_PATH="${BACKFILL_DEFAULT_OUTPUT_PATH}"
+          if [[ -z "${OUTPUT_PATH}" ]]; then
+            OUTPUT_PATH="gs://${GCP_PROJECT_ID}-loto-raw/backfill/default.csv"
+          fi
+
+          gcloud run jobs deploy "${JOB_NAME}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --source=jobs/backfill_loto_history \
+            --command=python \
+            --args="jobs/backfill_loto_history/main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"

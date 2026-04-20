@@ -1,0 +1,19 @@
+[
+  { "name": "lottery_type", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "draw_no", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "draw_date", "type": "DATE", "mode": "REQUIRED" },
+
+  { "name": "n1", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n2", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n3", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n4", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n5", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n6", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n7", "type": "INT64", "mode": "REQUIRED" },
+
+  { "name": "b1", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "b2", "type": "INT64", "mode": "REQUIRED" },
+
+  { "name": "source_url", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "created_at", "type": "TIMESTAMP", "mode": "NULLABLE" }
+]

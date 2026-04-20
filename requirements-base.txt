@@ -1,0 +1,11 @@
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+lxml>=5.2.0
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+
+# GCP
+google-cloud-bigquery>=3.25.0
+google-cloud-storage>=2.18.0
+google-cloud-pubsub>=2.23.0
+google-auth>=2.35.0

@@ -1,47 +1,9 @@
 [
-  {
-    "name": "created_at",
-    "type": "TIMESTAMP",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "function_name",
-    "type": "STRING",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "lottery_type",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "status",
-    "type": "STRING",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "message",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "gcs_uri",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "draw_number",
-    "type": "INTEGER",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "run_id",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "payload_json",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  }
+  { "name": "execution_id", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "lottery_type", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "stage", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "status", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "message", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "error_detail", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
 ]

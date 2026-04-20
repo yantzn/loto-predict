@@ -58,22 +58,7 @@ variable "log_level" {
 }
 
 variable "source_bucket_name" {
-  description = "Bucket name that stores Cloud Functions source zip files"
-  type        = string
-}
-
-variable "fetch_function_source_object" {
-  description = "GCS object path for fetch_loto_results source zip"
-  type        = string
-}
-
-variable "import_function_source_object" {
-  description = "GCS object path for import_loto_results_to_bq source zip"
-  type        = string
-}
-
-variable "notify_function_source_object" {
-  description = "GCS object path for generate_prediction_and_notify source zip"
+  description = "Bucket name that stores Cloud Functions source packages"
   type        = string
 }
 
@@ -83,7 +68,12 @@ variable "functions_runtime_service_account_email" {
 }
 
 variable "scheduler_invoker_service_account_email" {
-  description = "Service account email used by Cloud Scheduler and Pub/Sub OIDC push invocations"
+  description = "Service account email used by Cloud Scheduler and Pub/Sub push OIDC invocations"
+  type        = string
+}
+
+variable "cloud_run_jobs_service_account_email" {
+  description = "Service account email used by Cloud Run Jobs"
   type        = string
 }
 
@@ -104,9 +94,21 @@ variable "line_channel_access_token_secret_id" {
   type        = string
 }
 
+variable "line_channel_access_token_secret_version" {
+  description = "Secret version for LINE channel access token"
+  type        = string
+  default     = "1"
+}
+
 variable "line_user_id_secret_id" {
   description = "Existing Secret Manager secret ID for LINE target user ID"
   type        = string
+}
+
+variable "line_user_id_secret_version" {
+  description = "Secret version for LINE target user ID"
+  type        = string
+  default     = "1"
 }
 
 variable "scheduler_time_zone" {
@@ -134,7 +136,54 @@ variable "raw_bucket_name" {
 }
 
 variable "bucket_rotation_key" {
-  description = "Change this value only when you intentionally want to rotate generated bucket names."
+  description = "Change only when intentionally rotating generated bucket names."
   type        = string
   default     = "v1"
+}
+
+variable "backfill_job_timeout_seconds" {
+  description = "Timeout for a single Cloud Run Job task"
+  type        = number
+  default     = 3600
+}
+
+variable "backfill_job_memory" {
+  description = "Memory for Cloud Run Job"
+  type        = string
+  default     = "1Gi"
+}
+
+variable "backfill_job_cpu" {
+  description = "CPU for Cloud Run Job"
+  type        = string
+  default     = "1"
+}
+
+variable "backfill_job_image" {
+  description = "Container image for Cloud Run backfill job"
+  type        = string
+}
+
+variable "backfill_default_lottery_type" {
+  description = "Default lottery type used by Cloud Run backfill job"
+  type        = string
+  default     = "loto6"
+}
+
+variable "backfill_default_start_date" {
+  description = "Default start date(YYYY-MM-DD) used by Cloud Run backfill job"
+  type        = string
+  default     = "2026-01-01"
+}
+
+variable "backfill_default_end_date" {
+  description = "Default end date(YYYY-MM-DD) used by Cloud Run backfill job"
+  type        = string
+  default     = "2026-12-31"
+}
+
+variable "backfill_default_output_path" {
+  description = "Default output path used by Cloud Run backfill job. When empty, raw bucket path is generated."
+  type        = string
+  default     = ""
 }

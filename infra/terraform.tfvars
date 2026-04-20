@@ -25,6 +25,13 @@ notify_function_source_object = "functions/generate_prediction_and_notify/functi
 # bootstrap で作成した Service Account
 functions_runtime_service_account_email = "loto-fn-runtime-6df816@loto-predict-491915.iam.gserviceaccount.com"
 scheduler_invoker_service_account_email = "loto-scheduler-invoker-6df816@loto-predict-491915.iam.gserviceaccount.com"
+cloud_run_jobs_service_account_email    = "loto-cloudrun-jobs-6df816@loto-predict-491915.iam.gserviceaccount.com"
+
+backfill_job_image            = "asia-northeast1-docker.pkg.dev/loto-predict-491915/loto-predict/backfill-loto-history:latest"
+backfill_default_lottery_type = "loto6"
+backfill_default_start_date   = "2026-01-01"
+backfill_default_end_date     = "2026-12-31"
+backfill_default_output_path  = ""
 
 history_limit_loto6 = 100
 history_limit_loto7 = 100

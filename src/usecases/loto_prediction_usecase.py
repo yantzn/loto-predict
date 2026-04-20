@@ -1,63 +1,31 @@
-import random
-from datetime import datetime
-from src.infrastructure.bigquery_client import bq_client
-from src.infrastructure.line_client import line_client
-from src.config.settings import settings
-from src.domain.models import Prediction, PredictionRun
-from src.utils.logger import get_logger
+from __future__ import annotations
 
-logger = get_logger()
+import logging
 
-LOTO6_MIN, LOTO6_MAX, LOTO6_PICK = 1, 43, 6
-LOTO7_MIN, LOTO7_MAX, LOTO7_PICK = 1, 37, 7
+from google.cloud import bigquery
+
+from src.config.settings import get_settings, require_line_settings
+from src.infrastructure.line.line_client import LineClient, NoopLineClient
+from src.infrastructure.repositories.repository_factory import create_loto_repository
+from src.usecases.generate_and_notify import GenerateAndNotifyUseCase
 
 
-def generate_and_notify_prediction(lottery_type):
-    if lottery_type == 'loto6':
-        table = 'loto6_history'
-        pick_count = LOTO6_PICK
-        number_min = LOTO6_MIN
-        number_max = LOTO6_MAX
-        history_limit = settings.HISTORY_LIMIT_LOTO6
-    elif lottery_type == 'loto7':
-        table = 'loto7_history'
-        pick_count = LOTO7_PICK
-        number_min = LOTO7_MIN
-        number_max = LOTO7_MAX
-        history_limit = settings.HISTORY_LIMIT_LOTO7
-    else:
-        logger.error('Invalid lottery_type')
-        return None
+def generate_and_notify_prediction(lottery_type: str) -> dict[str, object]:
+    settings = get_settings()
+    logger = logging.getLogger(__name__)
+    use_dry_run = settings.is_local
 
-    # 履歴取得
-    rows = bq_client.fetch_history(table, history_limit)
-    # 出現回数集計
-    freq = {}
-    for row in rows:
-        for i in range(1, pick_count+1):
-            n = row[f'n{i}']
-            freq[n] = freq.get(n, 1) + 1
-    # 重み付きランダム
-    numbers = list(range(number_min, number_max+1))
-    weights = [freq.get(n, 1) for n in numbers]
-    predictions = []
-    for _ in range(5):
-        pick = random.choices(numbers, weights=weights, k=pick_count)
-        pick = sorted(set(pick))
-        while len(pick) < pick_count:
-            # 重複なし
-            pick.append(random.choice([n for n in numbers if n not in pick]))
-            pick = sorted(pick)
-        predictions.append(pick)
-    # LINE通知
-    msg = f"{lottery_type.upper()}予想\n" + '\n'.join([str(p) for p in predictions])
-    line_client.notify(msg)
-    # prediction_runs保存
-    run = PredictionRun(
+    if not use_dry_run:
+        require_line_settings(settings)
+
+    bq_client = None if settings.is_local else bigquery.Client(project=settings.gcp.project_id or None)
+    repository = create_loto_repository(bq_client=bq_client)
+    line_client = NoopLineClient() if use_dry_run else LineClient(settings.line.channel_access_token)
+    usecase = GenerateAndNotifyUseCase(repository=repository, line_client=line_client, logger=logger)
+    return usecase.execute(
         lottery_type=lottery_type,
-        draw_number=rows[0]['draw_number'] if rows else 0,
-        predictions=[Prediction(lottery_type, rows[0]['draw_number'] if rows else 0, p, datetime.now().isoformat()) for p in predictions],
-        created_at=datetime.now().isoformat()
+        history_limit=settings.lottery.stats_target_draws_for(lottery_type),
+        prediction_count=settings.lottery.prediction_count,
+        line_user_id=settings.line.user_id or "",
+        notify_enabled=not use_dry_run,
     )
-    bq_client.insert_prediction_run('prediction_runs', run.__dict__)
-    return {'predictions': predictions}

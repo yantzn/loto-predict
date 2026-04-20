@@ -1,4 +1,3 @@
-
 # loto-predict
 
 GCP ベースの **ロト6・ロト7 予想番号生成 & LINE 通知システム** です。
@@ -40,15 +39,123 @@ generate_prediction_and_notify
 
 ---
 
+## 実装整合ガイド（2026-04）
+
+以下は現行実装に合わせた運用上の正しい前提です。
+
+### 各コンポーネントの責務
+
+- `fetch_loto_results`:
+  - 最新当せん結果取得
+  - CSV正規化
+  - GCS保存
+  - importトピック publish（`execution_id`, `lottery_type`, `gcs_uri`, `draw_no`, `draw_date` を付与）
+- `import_loto_results_to_bq`:
+  - GCS CSV読込
+  - CSV行パース
+  - draw_no 重複除外
+  - BigQuery投入
+  - notifyトピック publish（`execution_id`, `lottery_type`, `gcs_uri`, `draw_no`, `draw_date` を付与）
+- `generate_prediction_and_notify`:
+  - Pub/Subデコード・入力検証
+  - repository / LINE client 生成
+  - UseCase呼び出し
+- `GenerateAndNotifyUseCase`:
+  - 履歴取得（最新順）
+  - 予想生成
+  - メッセージ組み立て
+  - LINE送信（localはdry-run）
+  - 実行記録保存
+
+### 必須環境変数
+
+最低限、次を設定してください。
+
+- `APP_ENV` (`local` or `gcp`)
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `BQ_DATASET`
+- `GCS_BUCKET_RAW`
+- `PUBSUB_IMPORT_TOPIC`
+- `PUBSUB_NOTIFY_TOPIC`
+- `HISTORY_LIMIT_LOTO6`
+- `HISTORY_LIMIT_LOTO7`
+- `PREDICTION_COUNT`
+- `LINE_CHANNEL_ACCESS_TOKEN`（gcpのみ必須）
+- `LINE_USER_ID`（gcpのみ必須）
+
+`BQ_DATASET` が標準です。`BIGQUERY_DATASET` は互換用途としてのみ扱い、運用設定は `BQ_DATASET` に統一してください。
+
+`APP_ENV=local` の場合は、`LINE_CHANNEL_ACCESS_TOKEN` と `LINE_USER_ID` は未設定でも実行できます。
+このとき通知は `NoopLineClient` により dry-run で処理されます。
+
+### 予想ロジックの考え方
+
+- UseCase が履歴を取得し、`statistics.py` で番号ごとの出現頻度スコアを算出します。
+- `prediction.py` ではそのスコアを重みに変換して、重み付きランダム（重複なし）で1口ずつ生成します。
+- 同一実行内で同一組合せは再利用しません（集合比較で重複判定）。
+- 1口内の表示順は「スコア降順・同点は番号昇順」です。
+- 生成要求が組合せ総数を超える場合は `ValueError` を返します。
+- 通知本文には回号（`draw_no`）と日本時間（`APP_TIMEZONE`、既定は `Asia/Tokyo`）を表示します。
+
+### ローカル実行
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-base.txt
+pip install -r requirements-local.txt
+```
+
+`.env.local.sample` を `.env.local` として配置し、`APP_ENV=local` を設定してください。
+
+- local の `generate_prediction_and_notify` は `NoopLineClient` を使う dry-run で動作します。
+- 実LINE送信は行わず、送信内容をログ出力します。
+
+### Backfill 実行
+
+ローカル:
+
+```powershell
+python jobs/backfill_loto_history/main.py --lottery-type loto6 --start-date 2026-01-01 --end-date 2026-04-01 --output-path ./local_storage/backfill/loto6_20260101_20260401.csv
+```
+
+Cloud Run Job:
+
+- `infra/backfill_job.tf` は backfill 専用コンテナ image を前提に実行します。
+- 必須引数 `--lottery-type --start-date --end-date --output-path` は Terraform 側で `command/args` として設定します。
+- 手動実行時は `gcloud run jobs execute ... --args` で上書き可能です。
+
+例:
+
+```powershell
+gcloud run jobs execute backfill-loto-history --region=asia-northeast1 --args="jobs/backfill_loto_history/main.py,--lottery-type,loto7,--start-date,2026-01-01,--end-date,2026-04-01,--output-path,gs://<raw-bucket>/backfill/loto7_20260101_20260401.csv"
+```
+
+### 動作確認コマンド
+
+```powershell
+pytest -q
+python -m compileall functions src jobs tests
+```
+
+ローカルで通知フロー確認（LINE送信はdry-run）:
+
+```powershell
+python -c "from src.usecases.loto_prediction_usecase import generate_and_notify_prediction; print(generate_and_notify_prediction('loto6'))"
+```
+
+---
+
 ## 特徴
 
-* GCP サーバーレス構成
-* Pub/Sub による疎結合な関数連携
-* BigQuery による履歴管理
-* `execution_id` による一連処理の追跡
-* 重複インポート防止
-* 重複通知防止
-* `common/` による関数共通処理の集約
+- GCP サーバーレス構成
+- Pub/Sub による疎結合な関数連携
+- BigQuery による履歴管理
+- `execution_id` による一連処理の追跡
+- 重複インポート防止
+- 重複通知防止
+- `common/` による関数共通処理の集約
 
 ---
 
@@ -183,11 +290,11 @@ Pub/Sub(notify-loto-prediction)
 
 役割:
 
-* Cloud Scheduler から HTTP 起動
-* ロト6 / ロト7 の最新当せん結果を取得
-* CSV に変換
-* GCS に保存
-* import 用 Pub/Sub にメッセージ送信
+- Cloud Scheduler から HTTP 起動
+- ロト6 / ロト7 の最新当せん結果を取得
+- CSV に変換
+- GCS に保存
+- import 用 Pub/Sub にメッセージ送信
 
 入力:
 
@@ -218,16 +325,15 @@ Pub/Sub(notify-loto-prediction)
 
 役割:
 
-* Pub/Sub push で起動
-* GCS の CSV を読み込み
-* 重複チェック
-* BigQuery の履歴テーブルに取り込み
-* notify 用 Pub/Sub にメッセージ送信
+- Pub/Sub push で起動
+- GCS の CSV を読み込み
+- 重複チェック
+- BigQuery の履歴テーブルに取り込み
+- notify 用 Pub/Sub にメッセージ送信
 
 重複防止:
 
-* `source_file_name`
-* `draw_no`
+- `draw_no`
 
 ---
 
@@ -235,15 +341,15 @@ Pub/Sub(notify-loto-prediction)
 
 役割:
 
-* Pub/Sub push で起動
-* BigQuery 履歴データを読み込み
-* 出現頻度ベースの重み付きランダムで予想生成
-* `prediction_runs` に保存
-* LINE Push 通知
+- Pub/Sub push で起動
+- BigQuery 履歴データを読み込み
+- 出現頻度ベースの重み付きランダムで予想生成
+- `prediction_runs` に保存
+- LINE Push 通知
 
 重複防止:
 
-* `run_id = execution_id`
+- `execution_id` 単位で同一実行を追跡
 
 ---
 
@@ -253,9 +359,9 @@ Pub/Sub(notify-loto-prediction)
 
 この ID を使って、
 
-* fetch
-* import
-* notify
+- fetch
+- import
+- notify
 
 のすべてを同じ単位で追跡します。
 
@@ -267,9 +373,9 @@ execution_id = 20260405-loto6-001
 
 用途:
 
-* 重複実行防止
-* ログ追跡
-* 障害調査
+- 重複実行防止
+- ログ追跡
+- 障害調査
 
 ---
 
@@ -281,12 +387,13 @@ execution_id = 20260405-loto6-001
 
 主なカラム:
 
-* `draw_no`
-* `draw_date`
-* `number1 ... number6`
-* `bonus_number`
-* `source_file_name`
-* `ingested_at`
+- `draw_no`
+- `draw_date`
+- `lottery_type`
+- `n1 ... n6`（`n7` は `NULLABLE`）
+- `b1`（`b2` は `NULLABLE`）
+- `source_url`
+- `created_at`
 
 ### loto7_history
 
@@ -294,46 +401,45 @@ execution_id = 20260405-loto6-001
 
 主なカラム:
 
-* `draw_no`
-* `draw_date`
-* `number1 ... number7`
-* `bonus_number1`
-* `bonus_number2`
-* `source_file_name`
-* `ingested_at`
+- `draw_no`
+- `draw_date`
+- `lottery_type`
+- `n1 ... n7`
+- `b1`
+- `b2`
+- `source_url`
+- `created_at`
 
 ### prediction_runs
 
-予想生成結果
+予想生成結果（1口=1行）
 
 主なカラム:
 
-* `run_id`
-* `lottery_type`
-* `prediction_numbers`
-* `created_at`
-* `created_date`
+- `execution_id`
+- `lottery_type`
+- `draw_no`
+- `draw_date`
+- `prediction_index`
+- `n1 ... n6`（`n7` は `NULLABLE`）
+- `message_sent`
+- `created_at`
 
 ### execution_logs
 
-実行ログ
+実行ログ（処理監査）
 
 主なカラム:
 
-* `execution_id`
-* `function_name`
-* `lottery_type`
-* `stage`
-* `status`
-* `message`
-* `gcs_bucket`
-* `gcs_object`
-* `draw_no`
-* `run_id`
-* `error_type`
-* `error_detail`
-* `executed_at`
-* `executed_date`
+- `execution_id`
+- `lottery_type`
+- `stage`
+- `status`
+- `message`
+- `error_detail`
+- `created_at`
+
+`prediction_runs` は予想結果の監査、`execution_logs` は fetch/import/generate の SUCCESS/FAILED を含む実行監査に使います。
 
 ---
 
@@ -343,14 +449,13 @@ execution_id = 20260405-loto6-001
 
 以下のどちらかに該当したら取り込みをスキップします。
 
-* 同じ `source_file_name`
-* 同じ `draw_no`
+- 同じ `draw_no`
 
 ### notify 側
 
 以下に該当したら通知をスキップします。
 
-* 同じ `run_id` が `prediction_runs` に存在
+- 同じ `execution_id` の再処理が検知された場合
 
 ---
 
@@ -360,19 +465,19 @@ execution_id = 20260405-loto6-001
 
 ### execution_log.py
 
-* `execution_logs` への書き込み
-* Cloud Logging との統一出力
+- `execution_logs` への書き込み
+- Cloud Logging との統一出力
 
 ### pubsub_message.py
 
-* Pub/Sub push リクエストの decode
-* 必須項目チェック
-* publish 用 bytes 生成
+- Pub/Sub push リクエストの decode
+- 必須項目チェック
+- publish 用 bytes 生成
 
 ### time_utils.py
 
-* JST 現在時刻取得
-* ISO 文字列変換
+- JST 現在時刻取得
+- ISO 文字列変換
 
 ---
 
@@ -382,9 +487,9 @@ execution_id = 20260405-loto6-001
 
 役割:
 
-* `functions/` 配下のソースを zip 化
-* `common/` を各 zip に同梱
-* GCS の function source bucket にアップロード
+- `functions/` 配下のソースを zip 化
+- `common/` を各 zip に同梱
+- GCS の function source bucket にアップロード
 
 アップロード先:
 
@@ -400,8 +505,8 @@ functions/generate_prediction_and_notify/function-source.zip
 
 役割:
 
-* Terraform init / validate / plan / apply
-* Cloud Functions / BigQuery / Pub/Sub / Scheduler / IAM を構築
+- Terraform init / validate / plan / apply
+- Cloud Functions / BigQuery / Pub/Sub / Scheduler / IAM を構築
 
 ---
 
@@ -436,13 +541,13 @@ SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL
 
 この Terraform は、以下を作成または利用します。
 
-* Cloud Functions Gen2
-* Cloud Scheduler
-* Pub/Sub Topic / Subscription
-* BigQuery Dataset / Tables
-* GCS Raw Bucket
-* Secret Manager
-* IAM Binding
+- Cloud Functions Gen2
+- Cloud Scheduler
+- Pub/Sub Topic / Subscription
+- BigQuery Dataset / Tables
+- GCS Raw Bucket
+- Secret Manager
+- IAM Binding
 
 ---
 
@@ -452,10 +557,26 @@ SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL
 
 ```text
 LINE_CHANNEL_ACCESS_TOKEN
-LINE_TO_USER_ID
+LINE_USER_ID
 ```
 
 Terraform では secret の**ID**を変数で受け取り、Cloud Functions の Secret Environment Variables に設定します。
+
+---
+
+## ブランチ運用
+
+- `develop` への push で function / job のデプロイワークフローを動かし、Terraform は plan / validate を実行します。
+- `main` への push では同じワークフローに加えて Terraform apply を実行します。
+- そのため、コード修正は `develop` で検証し、`main` を本番反映の基準にします。
+
+---
+
+## ローカル実行
+
+1. `.env.local.sample` を `.env.local` として用意し、`APP_ENV=local` と `LINE_USER_ID` を設定します。
+2. `LOCAL_STORAGE_PATH` 配下に CSV を保存するので、ローカルでは GCS なしでも実行できます。
+3. 予想確認は `pytest`、バックフィルは `python jobs/backfill_loto_history/main.py --lottery-type loto6 --start-date 2026-01-01 --end-date 2026-04-01 --output-path ./local_storage/backfill.csv` のように実行できます。
 
 ---
 
@@ -463,8 +584,8 @@ Terraform では secret の**ID**を変数で受け取り、Cloud Functions の 
 
 ### ロト6
 
-* 月曜・木曜
-* 19:05 JST
+- 月曜・木曜
+- 19:05 JST
 
 ```text
 5 19 * * 1,4
@@ -472,8 +593,8 @@ Terraform では secret の**ID**を変数で受け取り、Cloud Functions の 
 
 ### ロト7
 
-* 金曜
-* 19:05 JST
+- 金曜
+- 19:05 JST
 
 ```text
 5 19 * * 5
@@ -511,13 +632,13 @@ unzip -l dist/fetch_loto_results.zip
 
 GitHub Actions:
 
-* `Deploy Function Source`
+- `Deploy Function Source`
 
 ### 2. Terraform 適用
 
 GitHub Actions:
 
-* `Terraform Infra`
+- `Terraform Infra`
 
 ---
 
@@ -532,14 +653,13 @@ GitHub Actions:
 ```sql
 SELECT
   execution_id,
-  function_name,
   stage,
   status,
   message,
-  executed_at
+  created_at
 FROM `YOUR_PROJECT.YOUR_DATASET.execution_logs`
 WHERE execution_id = '対象execution_id'
-ORDER BY executed_at ASC
+ORDER BY created_at ASC
 ```
 
 ### Cloud Logging
@@ -558,18 +678,40 @@ jsonPayload.execution_id="対象execution_id"
 
 このシステムは、以下を重視しています。
 
-* 取得・取込・通知の責務分離
-* Pub/Sub による非同期連携
-* GCS を実データ置き場、Pub/Sub をイベント通知として利用
-* `execution_id` による一連処理のトレース
-* BigQuery による監査・検証しやすい構成
-* Secret のコード直書き禁止
+- 取得・取込・通知の責務分離
+- Pub/Sub による非同期連携
+- GCS を実データ置き場、Pub/Sub をイベント通知として利用
+- `execution_id` による一連処理のトレース
+- BigQuery による監査・検証しやすい構成
+- Secret のコード直書き禁止
+
+---
+
+## 設計・実装のベストプラクティス
+
+このリポジトリは、以下の設計・実装方針を徹底しています。
+
+- **型ヒント・docstringの徹底**: すべての関数・クラスに型ヒントとdocstringを付与し、保守性・可読性を最大化
+- **責務分離の厳守**: ドメイン・ユースケース・インフラ層を明確に分離し、各層の責務を厳格に管理
+- **アンチパターン禁止**:
+  - ドメイン層から外部サービス呼び出し禁止
+  - usecase層から直接インフラサービス呼び出し禁止（必ずI/F経由）
+  - os.environ等の直接参照禁止（設定はconfig/やSecret Manager経由）
+- **テスト容易性の担保**: ドメイン層は純粋関数・副作用なし、usecase層は外部I/Fを注入可能な設計
+- **CI/CD・運用の工夫**: GitHub Actionsでの自動デプロイ・TerraformによるIaC・Secret管理の徹底
+
+### 参考: 具体的な実装例
+
+- ドメイン層: `src/domain/`（外部依存なし、純粋関数・データクラスのみ）
+- ユースケース層: `src/usecases/`（インフラI/Fを注入し、ロジックをオーケストレーション）
+- インフラ層: `src/infrastructure/`（GCP/LINE等の外部サービスラッパー）
+- テスト: `tests/`（pytestベース、外部I/Fはmonkeypatchでモック）
 
 ---
 
 ## 注意点
 
-* 取得元ページの HTML 構造が変わると `fetch_loto_results` の解析ロジック修正が必要です
-* 予想番号は統計参考値であり、当せんを保証するものではありません
-* 現在の予想ロジックは軽量な重み付きランダム方式です
-* 機械学習モデルは導入していません
+- 取得元ページの HTML 構造が変わると `fetch_loto_results` の解析ロジック修正が必要です
+- 予想番号は統計参考値であり、当せんを保証するものではありません
+- 現在の予想ロジックは軽量な重み付きランダム方式です
+- 機械学習モデルは導入していません

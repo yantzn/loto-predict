@@ -1,33 +1,74 @@
-name: Deploy Function Source
+name: Deploy GCP Cloud Functions Source # Cloud Functionsデプロイ用ワークフロー
 
 on:
+  # source object 更新ワークフロー。
+  # Cloud Functions Gen2 本体の更新(apply/rollout)は Terraform workflow 側で実施する。
   push:
     branches:
       - main
     paths:
+      # 関数・依存コード・スクリプト・ワークフローの変更時にのみ発火
       - "functions/**"
-      - "scripts/package_functions.sh"
+      - "src/**"
+      - "requirements-base.txt"
+      - "requirements-local.txt"
+      - ".github/scripts/package_functions.sh"
+      - ".github/scripts/terraform_infra_wait.py"
       - ".github/workflows/deploy-function-source.yml"
   workflow_dispatch:
-
 permissions:
+  # OIDC認証やリポジトリ参照用
   contents: read
   id-token: write
+  actions: read
+
+concurrency:
+  # 同一ブランチでの同時デプロイ競合防止
+  group: app-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 env:
+  # GCPプロジェクト・リージョン・Cloud Functions用バケット等の環境変数
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   SOURCE_BUCKET_NAME: ${{ vars.FUNCTION_SOURCE_BUCKET }}
 
+  FETCH_OBJECT: functions/fetch_loto_results/function-source.zip
+  IMPORT_OBJECT: functions/import_loto_results_to_bq/function-source.zip
+  NOTIFY_OBJECT: functions/generate_prediction_and_notify/function-source.zip
+
 jobs:
+  # Terraform apply と同時に source object を更新しないための待機ジョブ。
+  wait-for-terraform:
+    # 他のTerraform Infraワークフローが終わるまで待機
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wait until Terraform Infra is idle on this branch # 競合防止
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking Terraform Infra runs on branch=${BRANCH}"
+          python .github/scripts/terraform_infra_wait.py
+
   package-and-upload:
+    # このworkflowの責務は source zip の作成と GCS object 更新まで。
+    # Cloud Functions リソースの実更新は terraform-infra workflow へ委譲する。
+    needs: wait-for-terraform
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate required variables
+      - name: Validate required variables # GCP変数の未設定チェック
         shell: bash
         run: |
           set -euo pipefail
@@ -35,7 +76,7 @@ jobs:
           test -n "${GCP_REGION}"
           test -n "${SOURCE_BUCKET_NAME}"
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud # OIDC認証
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -43,78 +84,33 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Set up gcloud
+      - name: Set up gcloud # gcloud CLIセットアップ
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          version: latest
 
-      - name: Verify gcloud project
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud config set project "${GCP_PROJECT_ID}"
-          gcloud config get-value project
-
-      - name: Set up Python
+      - name: Set up Python # パッケージング用Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Ensure zip command exists
+      - name: Package functions # 関数zip生成
         shell: bash
         run: |
           set -euo pipefail
-          command -v zip >/dev/null 2>&1
+          chmod +x ./.github/scripts/package_functions.sh
+          bash ./.github/scripts/package_functions.sh
 
-      - name: Package functions
+      - name: Verify packaged archives # zip生成確認
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./scripts/package_functions.sh
-          bash ./scripts/package_functions.sh
-
-      - name: Verify packaged archives
-        shell: bash
-        run: |
-          set -euo pipefail
-
           test -f dist/fetch_loto_results.zip
           test -f dist/import_loto_results_to_bq.zip
           test -f dist/generate_prediction_and_notify.zip
 
-          unzip -l dist/fetch_loto_results.zip | grep "common/"
-          unzip -l dist/import_loto_results_to_bq.zip | grep "common/"
-          unzip -l dist/generate_prediction_and_notify.zip | grep "common/"
-
-      - name: Upload fetch_loto_results source
+      - name: Upload packaged archives to source bucket # GCSアップロード
         shell: bash
         run: |
           set -euo pipefail
-          gcloud storage cp \
-            dist/fetch_loto_results.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip
-
-      - name: Upload import_loto_results_to_bq source
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud storage cp \
-            dist/import_loto_results_to_bq.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results/function-source.zip
-
-      - name: Upload generate_prediction_and_notify source
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud storage cp \
-            dist/generate_prediction_and_notify.zip \
-            gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip
-
-      - name: Show uploaded object paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Uploaded:"
-          echo "gs://${SOURCE_BUCKET_NAME}/functions/fetch_loto_results/function-source.zip"
-          echo "gs://${SOURCE_BUCKET_NAME}/functions/import_loto_results/function-source.zip"
-          echo "gs://${SOURCE_BUCKET_NAME}/functions/generate_prediction_and_notify/function-source.zip"
+          gcloud storage cp dist/fetch_loto_results.zip gs://${SOURCE_BUCKET_NAME}/${FETCH_OBJECT}
+          gcloud storage cp dist/import_loto_results_to_bq.zip gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
+          gcloud storage cp dist/generate_prediction_and_notify.zip gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}

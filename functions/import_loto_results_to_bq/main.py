@@ -1,266 +1,259 @@
 from __future__ import annotations
 
-import csv
-import io
+import base64
+import json
 import logging
 import os
-from typing import Any
+import sys
+import argparse
+from pathlib import Path
 
-from google.cloud import bigquery, pubsub_v1, storage
+from google.cloud import bigquery, pubsub_v1
 
-from common.execution_log import log_and_write
-from common.pubsub_message import decode_pubsub_push_request, require_fields, to_pubsub_data
-from common.time_utils import now_local_iso
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from src.config.settings import get_settings
+from src.infrastructure.gcs.storage_factory import create_storage_client
+from src.infrastructure.repositories.bigquery_loto_repository import BigQueryLotoRepository
+from src.infrastructure.repositories.local_loto_repository import LocalLotoRepository
+from src.usecases.import_loto_results_to_bq import ImportLotoResultsInput, ImportLotoResultsToBQUseCase
+
+try:
+    from common.execution_log import write_execution_log
+except ImportError:
+    try:
+        from functions.common.execution_log import write_execution_log
+    except ImportError:
+        def write_execution_log(**kwargs):
+            del kwargs
+            return None
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = os.environ["GCP_PROJECT_ID"]
-DATASET_ID = os.environ["BIGQUERY_DATASET"]
-RAW_BUCKET_NAME = os.environ["GCS_BUCKET_RAW"]
 
-BQ_TABLE_LOTO6_HISTORY = os.environ["BQ_TABLE_LOTO6_HISTORY"]
-BQ_TABLE_LOTO7_HISTORY = os.environ["BQ_TABLE_LOTO7_HISTORY"]
-BQ_TABLE_LOTO6_VALIDATION = os.environ["BQ_TABLE_LOTO6_VALIDATION"]
-BQ_TABLE_LOTO7_VALIDATION = os.environ["BQ_TABLE_LOTO7_VALIDATION"]
-
-NOTIFY_TOPIC_NAME = os.environ["PUBSUB_NOTIFY_TOPIC"]
-
-storage_client = storage.Client(project=PROJECT_ID)
-bq_client = bigquery.Client(project=PROJECT_ID)
-publisher = pubsub_v1.PublisherClient()
-notify_topic_path = publisher.topic_path(PROJECT_ID, NOTIFY_TOPIC_NAME)
-
-
-def _table_name(lottery_type: str) -> str:
-    if lottery_type == "LOTO6":
-        return BQ_TABLE_LOTO6_HISTORY
-    if lottery_type == "LOTO7":
-        return BQ_TABLE_LOTO7_HISTORY
-    raise ValueError(f"unsupported lottery_type: {lottery_type}")
-
-
-def _read_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]:
-    blob = storage_client.bucket(bucket_name).blob(object_name)
-    text = blob.download_as_text(encoding="utf-8")
-    return list(csv.DictReader(io.StringIO(text)))
-
-
-def _normalize_rows(
-    lottery_type: str,
-    rows: list[dict[str, str]],
-    source_file_name: str,
-) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
-
-    for row in rows:
-        if lottery_type == "LOTO6":
-            normalized.append(
-                {
-                    "draw_no": int(row["draw_no"]),
-                    "draw_date": row["draw_date"],
-                    "number1": int(row["number1"]),
-                    "number2": int(row["number2"]),
-                    "number3": int(row["number3"]),
-                    "number4": int(row["number4"]),
-                    "number5": int(row["number5"]),
-                    "number6": int(row["number6"]),
-                    "bonus_number": int(row["bonus_number"]) if row.get("bonus_number") else None,
-                    "source_file_name": source_file_name,
-                    "ingested_at": now_local_iso(),
-                }
-            )
-        else:
-            normalized.append(
-                {
-                    "draw_no": int(row["draw_no"]),
-                    "draw_date": row["draw_date"],
-                    "number1": int(row["number1"]),
-                    "number2": int(row["number2"]),
-                    "number3": int(row["number3"]),
-                    "number4": int(row["number4"]),
-                    "number5": int(row["number5"]),
-                    "number6": int(row["number6"]),
-                    "number7": int(row["number7"]),
-                    "bonus_number1": int(row["bonus_number1"]) if row.get("bonus_number1") else None,
-                    "bonus_number2": int(row["bonus_number2"]) if row.get("bonus_number2") else None,
-                    "source_file_name": source_file_name,
-                    "ingested_at": now_local_iso(),
-                }
-            )
-
-    return normalized
-
-
-def _extract_draw_nos(rows: list[dict[str, Any]]) -> list[int]:
-    return sorted({int(row["draw_no"]) for row in rows})
-
-
-def _exists_same_source_file(table_id: str, source_file_name: str) -> bool:
-    query = f"""
-    SELECT COUNT(1) AS cnt
-    FROM `{table_id}`
-    WHERE source_file_name = @source_file_name
-    """
-    job = bq_client.query(
-        query,
-        job_config=bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("source_file_name", "STRING", source_file_name)
-            ]
-        ),
-    )
-    return list(job.result())[0]["cnt"] > 0
-
-
-def _existing_draw_nos(table_id: str, draw_nos: list[int]) -> set[int]:
-    query = f"""
-    SELECT draw_no
-    FROM `{table_id}`
-    WHERE draw_no IN UNNEST(@draw_nos)
-    """
-    job = bq_client.query(
-        query,
-        job_config=bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ArrayQueryParameter("draw_nos", "INT64", draw_nos)
-            ]
-        ),
-    )
-    return {int(row["draw_no"]) for row in job.result()}
-
-
-def _insert_rows(table_id: str, rows: list[dict[str, Any]]) -> None:
-    errors = bq_client.insert_rows_json(table_id, rows)
-    if errors:
-        raise RuntimeError(f"BigQuery insert failed: {errors}")
-
-
-def _publish_notify_message(
+def _log_execution(
+    *,
     execution_id: str,
-    lottery_type: str,
-    bucket_name: str,
-    object_name: str,
-    table_id: str,
-    imported_rows: int,
-    skipped_as_duplicate: bool,
-) -> str:
-    message = {
-        "event_type": "IMPORT_COMPLETED",
-        "execution_id": execution_id,
-        "lottery_type": lottery_type,
-        "gcs_bucket": bucket_name,
-        "gcs_object": object_name,
-        "target_table": table_id,
-        "imported_rows": imported_rows,
-        "skipped_as_duplicate": skipped_as_duplicate,
-        "imported_at": now_local_iso(),
-    }
-    future = publisher.publish(notify_topic_path, to_pubsub_data(message))
-    return future.result()
-
-
-def entry_point(request):
-    execution_id = ""
-    lottery_type = ""
-    bucket_name = None
-    object_name = None
+    lottery_type: str | None,
+    stage: str,
+    status: str,
+    message: str,
+    error_type: str | None = None,
+    error_detail: str | None = None,
+) -> None:
+    # local では監査用 env が未設定でも処理検証を継続したいため、
+    # execution_logs 書き込み失敗はここで warning に落として本体結果を優先する。
+    project_id = os.getenv("GCP_PROJECT_ID")
+    dataset_id = os.getenv("BQ_DATASET") or os.getenv("BIGQUERY_DATASET")
+    if not project_id or not dataset_id:
+        logger.warning(
+            "execution log write skipped due to missing env. execution_id=%s stage=%s status=%s",
+            execution_id,
+            stage,
+            status,
+        )
+        return
 
     try:
-        message = decode_pubsub_push_request(request)
-        require_fields(message, ["execution_id", "lottery_type", "gcs_bucket", "gcs_object"])
-
-        execution_id = message["execution_id"]
-        lottery_type = message["lottery_type"]
-        bucket_name = message["gcs_bucket"]
-        object_name = message["gcs_object"]
-
-        log_and_write(
-            execution_id=execution_id,
+        write_execution_log(
+            execution_id=execution_id or "unknown",
             function_name="import_loto_results_to_bq",
             lottery_type=lottery_type,
-            stage="import",
-            status="STARTED",
-            message="import started",
-            gcs_bucket=bucket_name,
-            gcs_object=object_name,
+            stage=stage,
+            status=status,
+            message=message,
+            error_type=error_type,
+            error_detail=error_detail,
+        )
+    except Exception as exc:
+        logger.warning(
+            "execution log write skipped/failed. execution_id=%s stage=%s status=%s error=%s",
+            execution_id,
+            stage,
+            status,
+            str(exc),
         )
 
-        table_id = f"{PROJECT_ID}.{DATASET_ID}.{_table_name(lottery_type)}"
 
-        raw_rows = _read_csv_rows(bucket_name, object_name)
-        normalized_rows = _normalize_rows(lottery_type, raw_rows, object_name)
-        draw_nos = _extract_draw_nos(normalized_rows)
+class _PubSubPublisher:
+    def __init__(self, project_id: str, topic_name: str) -> None:
+        self._publisher = pubsub_v1.PublisherClient()
+        self._topic_path = self._publisher.topic_path(project_id, topic_name)
 
-        if _exists_same_source_file(table_id, object_name):
-            log_and_write(
-                execution_id=execution_id,
-                function_name="import_loto_results_to_bq",
-                lottery_type=lottery_type,
-                stage="import",
-                status="SKIPPED_DUPLICATE",
-                message="duplicate by source_file_name",
-                gcs_bucket=bucket_name,
-                gcs_object=object_name,
-                draw_no=draw_nos[0] if draw_nos else None,
-            )
-            return {"status": "ok", "reason": "duplicate_source_file"}, 200
+    def publish_json(self, payload: dict[str, object]) -> str:
+        future = self._publisher.publish(self._topic_path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        return str(future.result())
 
-        existing_draws = _existing_draw_nos(table_id, draw_nos)
-        rows_to_insert = [row for row in normalized_rows if int(row["draw_no"]) not in existing_draws]
 
-        if not rows_to_insert:
-            log_and_write(
-                execution_id=execution_id,
-                function_name="import_loto_results_to_bq",
-                lottery_type=lottery_type,
-                stage="import",
-                status="SKIPPED_DUPLICATE",
-                message="duplicate by draw_no",
-                gcs_bucket=bucket_name,
-                gcs_object=object_name,
-                draw_no=draw_nos[0] if draw_nos else None,
-            )
-            return {"status": "ok", "reason": "duplicate_draw_no"}, 200
+class _NoopPublisher:
+    def publish_json(self, payload: dict[str, object]) -> str:
+        logger.info("Skip Pub/Sub publish in local mode. payload=%s", payload)
+        return "local-skip"
 
-        _insert_rows(table_id, rows_to_insert)
 
-        _publish_notify_message(
-            execution_id=execution_id,
-            lottery_type=lottery_type,
-            bucket_name=bucket_name,
-            object_name=object_name,
-            table_id=table_id,
-            imported_rows=len(rows_to_insert),
-            skipped_as_duplicate=False,
+def _decode_event_data(event) -> dict[str, object]:
+    if isinstance(event, dict):
+        raw_data = event.get("data")
+        if raw_data:
+            decoded = base64.b64decode(raw_data).decode("utf-8")
+            return json.loads(decoded)
+
+    envelope = getattr(event, "data", event)
+    if isinstance(envelope, dict) and envelope.get("data"):
+        decoded = base64.b64decode(envelope["data"]).decode("utf-8")
+        return json.loads(decoded)
+
+    message = envelope.get("message", envelope)
+    raw_data = message.get("data")
+    if not raw_data:
+        raise ValueError("Pub/Sub message data is empty")
+
+    decoded = base64.b64decode(raw_data).decode("utf-8")
+    return json.loads(decoded)
+
+
+def _build_usecase(settings):
+    publisher = _NoopPublisher()
+    if not settings.is_local:
+        if not settings.gcp.project_id:
+            raise ValueError("GCP_PROJECT_ID is required in non-local mode")
+        publisher = _PubSubPublisher(settings.gcp.project_id, settings.gcp.notify_topic_name)
+
+    if settings.is_local:
+        repository = LocalLotoRepository(
+            base_path=getattr(settings, "local_storage_path", "./local_storage"),
+            table_loto6=getattr(settings.gcp, "table_loto6_history", "loto6_history"),
+            table_loto7=getattr(settings.gcp, "table_loto7_history", "loto7_history"),
+            prediction_runs_table=getattr(settings.gcp, "table_prediction_runs", "prediction_runs"),
+        )
+    else:
+        bq_client = bigquery.Client(project=settings.gcp.project_id or None)
+        repository = BigQueryLotoRepository(
+            bq_client=bq_client,
+            project_id=settings.gcp.project_id,
+            dataset=settings.gcp.bigquery_dataset,
+            table_loto6=getattr(settings.gcp, "table_loto6_history", "loto6_history"),
+            table_loto7=getattr(settings.gcp, "table_loto7_history", "loto7_history"),
+            prediction_runs_table=getattr(settings.gcp, "table_prediction_runs", "prediction_runs"),
         )
 
-        log_and_write(
-            execution_id=execution_id,
-            function_name="import_loto_results_to_bq",
-            lottery_type=lottery_type,
+    return ImportLotoResultsToBQUseCase(
+        settings=settings,
+        storage_client=create_storage_client(settings),
+        repository=repository,
+        publisher=publisher,
+    )
+
+
+def import_loto_results_to_bq(event, context=None):
+    # Pub/Sub デコードは Function 層に留め、usecase をローカル実行と共通化するため。
+    del context
+    execution_id = ""
+    lottery_type: str | None = None
+    gcs_uri: str | None = None
+
+    try:
+        settings = get_settings()
+        payload = _decode_event_data(event)
+        execution_id = str(payload.get("execution_id") or "")
+        lottery_type = str(payload.get("lottery_type") or "").strip().lower()
+
+        gcs_uri = str(payload.get("gcs_uri") or "").strip()
+        if not gcs_uri:
+            gcs_bucket = str(payload.get("gcs_bucket") or "").strip()
+            gcs_object = str(payload.get("gcs_object") or "").strip()
+            if gcs_bucket and gcs_object:
+                gcs_uri = f"gs://{gcs_bucket}/{gcs_object}"
+        if not gcs_uri:
+            raise ValueError("gcs_uri is required")
+
+        usecase = _build_usecase(settings)
+        result = usecase.execute(
+            ImportLotoResultsInput(
+                lottery_type=lottery_type,
+                gcs_uri=gcs_uri,
+                publish_notify_message=True,
+                execution_id=execution_id or None,
+            )
+        )
+
+        _log_execution(
+            execution_id=result.execution_id,
+            lottery_type=result.lottery_type,
             stage="import",
             status="SUCCESS",
-            message=f"imported_rows={len(rows_to_insert)}",
-            gcs_bucket=bucket_name,
-            gcs_object=object_name,
-            draw_no=draw_nos[0] if draw_nos else None,
+            message=(
+                f"draw_no={result.draw_no} total_rows={result.total_rows} inserted_rows={result.inserted_rows} "
+                f"skipped_rows={result.skipped_rows} gcs_uri={result.gcs_uri}"
+            ),
         )
 
-        return {"status": "ok", "inserted_rows": len(rows_to_insert)}, 200
-
+        logger.info(
+            "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s draw_no=%s total=%s inserted=%s skipped=%s",
+            result.execution_id,
+            result.lottery_type,
+            result.draw_no,
+            result.total_rows,
+            result.inserted_rows,
+            result.skipped_rows,
+        )
+        return {
+            "status": "ok",
+            "execution_id": result.execution_id,
+            "lottery_type": result.lottery_type,
+            "total_rows": result.total_rows,
+            "inserted_rows": result.inserted_rows,
+            "skipped_rows": result.skipped_rows,
+            "gcs_uri": result.gcs_uri,
+            "draw_no": result.draw_no,
+            "draw_date": result.draw_date,
+        }
     except Exception as exc:
-        log_and_write(
-            execution_id=execution_id or "UNKNOWN",
-            function_name="import_loto_results_to_bq",
-            lottery_type=lottery_type or None,
+        _log_execution(
+            execution_id=execution_id or "unknown",
+            lottery_type=lottery_type,
             stage="import",
             status="FAILED",
-            message="import failed",
-            gcs_bucket=bucket_name,
-            gcs_object=object_name,
+            message="import_loto_results_to_bq failed",
             error_type=type(exc).__name__,
             error_detail=str(exc),
         )
-        logger.exception("import_loto_results_to_bq failed")
-        return {"error": str(exc)}, 500
+        logger.exception(
+            "import_loto_results_to_bq failed. execution_id=%s lottery_type=%s gcs_uri=%s error_message=%s",
+            execution_id,
+            lottery_type,
+            gcs_uri,
+            str(exc),
+        )
+        raise
+
+
+def entry_point(cloud_event):
+    payload = _decode_event_data(cloud_event)
+    event = {
+        "data": base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+    }
+    return import_loto_results_to_bq(event, None)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run import_loto_results_to_bq locally")
+    parser.add_argument("--lottery-type", choices=["loto6", "loto7"], default="loto6")
+    parser.add_argument("--gcs-uri")
+    parser.add_argument("--execution-id", default="local-sample")
+    args = parser.parse_args()
+
+    default_gcs_uri = f"gs://local-raw/{args.lottery_type}/latest/latest.csv"
+    sample = {
+        "execution_id": args.execution_id,
+        "lottery_type": args.lottery_type,
+        "gcs_uri": args.gcs_uri or default_gcs_uri,
+    }
+    event = {
+        "data": base64.b64encode(json.dumps(sample, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+    }
+    print(json.dumps(import_loto_results_to_bq(event, None), ensure_ascii=False, indent=2))

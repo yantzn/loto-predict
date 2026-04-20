@@ -1,32 +1,19 @@
 [
-  {
-    "name": "lottery_type",
-    "type": "STRING",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "draw_no",
-    "type": "INT64",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "stats_target_draws",
-    "type": "INT64",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "score_snapshot",
-    "type": "JSON",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "generated_predictions",
-    "type": "JSON",
-    "mode": "REQUIRED"
-  },
-  {
-    "name": "created_at",
-    "type": "TIMESTAMP",
-    "mode": "REQUIRED"
-  }
+  { "name": "execution_id", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "lottery_type", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "draw_no", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "draw_date", "type": "DATE", "mode": "NULLABLE" },
+
+  { "name": "prediction_index", "type": "INT64", "mode": "REQUIRED" },
+
+  { "name": "n1", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n2", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n3", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n4", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n5", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n6", "type": "INT64", "mode": "REQUIRED" },
+  { "name": "n7", "type": "INT64", "mode": "NULLABLE" },
+
+  { "name": "message_sent", "type": "BOOL", "mode": "NULLABLE" },
+  { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
 ]

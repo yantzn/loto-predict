@@ -1,31 +1,21 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional
 
-@dataclass
-class Loto6Result:
-    draw_number: int
-    draw_date: str
-    numbers: List[int]
-    bonus: int
+from src.domain.loto_result import LotoResult
 
-@dataclass
-class Loto7Result:
-    draw_number: int
-    draw_date: str
-    numbers: List[int]
-    bonus1: int
-    bonus2: int
 
-@dataclass
+@dataclass(frozen=True)
 class Prediction:
     lottery_type: str
-    draw_number: int
-    numbers: List[int]
+    draw_no: int
+    numbers: list[int]
     created_at: str
 
-@dataclass
+
+@dataclass(frozen=True)
 class PredictionRun:
     lottery_type: str
-    draw_number: int
-    predictions: List[Prediction]
+    draw_no: int
+    predictions: list[Prediction]
     created_at: str

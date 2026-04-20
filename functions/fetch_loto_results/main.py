@@ -1,304 +1,215 @@
 from __future__ import annotations
 
-import csv
-import io
+import json
 import logging
 import os
-import re
+import sys
 import uuid
-from dataclasses import dataclass
-from typing import Iterable
+import argparse
+from pathlib import Path
 
-import requests
-from bs4 import BeautifulSoup
-from google.cloud import pubsub_v1, storage
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-from common.execution_log import log_and_write
-from common.pubsub_message import to_pubsub_data
-from common.time_utils import now_local_iso
+from src.config.settings import get_settings
+from src.infrastructure.gcs.storage_factory import create_storage_client
+from src.infrastructure.rakuten_loto import RakutenLotoClient
+from src.usecases.fetch_loto_results import FetchLotoResultsInput, FetchLotoResultsUseCase
+
+try:
+    from common.execution_log import write_execution_log
+except ImportError:
+    try:
+        from functions.common.execution_log import write_execution_log
+    except ImportError:
+        def write_execution_log(**kwargs):
+            del kwargs
+            return None
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = os.environ["GCP_PROJECT_ID"]
-RAW_BUCKET_NAME = os.environ["GCS_BUCKET_RAW"]
-IMPORT_TOPIC_NAME = os.environ["PUBSUB_IMPORT_TOPIC"]
 
-LOTO6_PAGE_URL = "https://www.mizuhobank.co.jp/takarakuji/check/loto/loto6/index.html"
-LOTO7_PAGE_URL = "https://www.mizuhobank.co.jp/takarakuji/check/loto/loto7/index.html"
-REQUEST_TIMEOUT_SECONDS = 60
-
-storage_client = storage.Client(project=PROJECT_ID)
-publisher = pubsub_v1.PublisherClient()
-import_topic_path = publisher.topic_path(PROJECT_ID, IMPORT_TOPIC_NAME)
-
-
-@dataclass(frozen=True)
-class LotoResult:
-    lottery_type: str
-    draw_no: int
-    draw_date: str
-    main_numbers: list[int]
-    bonus_numbers: list[int]
-
-
-def _extract_request_json(request) -> dict:
-    payload = request.get_json(silent=True)
-    return payload or {}
-
-
-def _page_url_for(lottery_type: str) -> str:
-    if lottery_type == "LOTO6":
-        return LOTO6_PAGE_URL
-    if lottery_type == "LOTO7":
-        return LOTO7_PAGE_URL
-    raise ValueError(f"unsupported lottery_type: {lottery_type}")
-
-
-def _normalize_text(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text("\n", strip=True)
-    text = text.replace("\u3000", " ")
-    return re.sub(r"[ \t]+", " ", text)
-
-
-def _extract_draw_header(text: str, lottery_type: str) -> tuple[int, str]:
-    pattern = rf"{lottery_type}\s*第(\d+)回\s*(\d{{4}})年(\d{{1,2}})月(\d{{1,2}})日抽せん"
-    match = re.search(pattern, text)
-    if not match:
-        raise ValueError(f"failed to parse draw header for {lottery_type}")
-
-    draw_no = int(match.group(1))
-    yyyy = int(match.group(2))
-    mm = int(match.group(3))
-    dd = int(match.group(4))
-    return draw_no, f"{yyyy:04d}-{mm:02d}-{dd:02d}"
-
-
-def _iter_two_digit_numbers(text: str) -> Iterable[int]:
-    for value in re.findall(r"(?<!\d)\d{1,2}(?!\d)", text):
-        yield int(value)
-
-
-def _extract_number_blocks(text: str) -> tuple[list[int], list[int]]:
-    lines = text.splitlines()
-    main_numbers: list[int] | None = None
-    bonus_numbers: list[int] | None = None
-
-    for idx, line in enumerate(lines):
-        normalized = line.strip()
-
-        if normalized == "本数字":
-            values: list[int] = []
-            for next_line in lines[idx + 1 : idx + 8]:
-                values.extend(list(_iter_two_digit_numbers(next_line)))
-                if len(values) >= 7:
-                    break
-            main_numbers = values
-
-        if normalized == "ボーナス数字":
-            values = []
-            for next_line in lines[idx + 1 : idx + 5]:
-                values.extend(list(_iter_two_digit_numbers(next_line)))
-                if len(values) >= 2:
-                    break
-            bonus_numbers = values
-
-        if main_numbers is not None and bonus_numbers is not None:
-            break
-
-    if main_numbers is None or bonus_numbers is None:
-        raise ValueError("failed to parse numbers")
-
-    return main_numbers, bonus_numbers
-
-
-def _parse_latest_result(html: str, lottery_type: str) -> LotoResult:
-    text = _normalize_text(html)
-    draw_no, draw_date = _extract_draw_header(text, lottery_type)
-    main_numbers, bonus_numbers = _extract_number_blocks(text)
-
-    if lottery_type == "LOTO6":
-        main_numbers = main_numbers[:6]
-        bonus_numbers = bonus_numbers[:1]
-    else:
-        main_numbers = main_numbers[:7]
-        bonus_numbers = bonus_numbers[:2]
-
-    return LotoResult(
-        lottery_type=lottery_type,
-        draw_no=draw_no,
-        draw_date=draw_date,
-        main_numbers=main_numbers,
-        bonus_numbers=bonus_numbers,
-    )
-
-
-def _download_latest_result(lottery_type: str) -> LotoResult:
-    response = requests.get(
-        _page_url_for(lottery_type),
-        timeout=REQUEST_TIMEOUT_SECONDS,
-        headers={
-            "User-Agent": "loto-predict/1.0 (+Cloud Functions Gen2)",
-            "Accept-Language": "ja,en;q=0.8",
-        },
-    )
-    response.raise_for_status()
-    return _parse_latest_result(response.text, lottery_type)
-
-
-def _to_csv(result: LotoResult) -> str:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-
-    if result.lottery_type == "LOTO6":
-        writer.writerow(
-            [
-                "draw_no",
-                "draw_date",
-                "number1",
-                "number2",
-                "number3",
-                "number4",
-                "number5",
-                "number6",
-                "bonus_number",
-            ]
+def _log_execution(*, execution_id: str, lottery_type: str | None, stage: str, status: str, message: str, draw_no: int | None = None, error_type: str | None = None, error_detail: str | None = None) -> None:
+    # local では監査用 env が未設定でも本体処理を止めないことを優先する。
+    # write 失敗をここで吸収しないと、fetch 本体の真因より先に監査失敗ログが目立って調査しづらくなる。
+    project_id = os.getenv("GCP_PROJECT_ID")
+    dataset_id = os.getenv("BQ_DATASET") or os.getenv("BIGQUERY_DATASET")
+    if not project_id or not dataset_id:
+        logger.warning(
+            "execution log write skipped due to missing env. execution_id=%s stage=%s status=%s",
+            execution_id,
+            stage,
+            status,
         )
-        writer.writerow(
-            [
-                result.draw_no,
-                result.draw_date,
-                *result.main_numbers,
-                result.bonus_numbers[0],
-            ]
-        )
-    else:
-        writer.writerow(
-            [
-                "draw_no",
-                "draw_date",
-                "number1",
-                "number2",
-                "number3",
-                "number4",
-                "number5",
-                "number6",
-                "number7",
-                "bonus_number1",
-                "bonus_number2",
-            ]
-        )
-        writer.writerow(
-            [
-                result.draw_no,
-                result.draw_date,
-                *result.main_numbers,
-                result.bonus_numbers[0],
-                result.bonus_numbers[1],
-            ]
-        )
-
-    return buffer.getvalue()
-
-
-def _upload_csv(csv_text: str, object_name: str) -> None:
-    blob = storage_client.bucket(RAW_BUCKET_NAME).blob(object_name)
-    blob.upload_from_string(csv_text, content_type="text/csv; charset=utf-8")
-
-
-def _publish_import_message(
-    execution_id: str,
-    lottery_type: str,
-    gcs_object: str,
-    draw_no: int,
-    draw_date: str,
-) -> str:
-    message = {
-        "event_type": "FETCH_COMPLETED",
-        "execution_id": execution_id,
-        "lottery_type": lottery_type,
-        "gcs_bucket": RAW_BUCKET_NAME,
-        "gcs_object": gcs_object,
-        "draw_no": draw_no,
-        "draw_date": draw_date,
-        "fetched_at": now_local_iso(),
-    }
-    future = publisher.publish(import_topic_path, to_pubsub_data(message))
-    return future.result()
-
-
-def entry_point(request):
-    execution_id = ""
-    lottery_type = ""
+        return
 
     try:
-        payload = _extract_request_json(request)
-        lottery_type = payload.get("lottery_type")
-
-        if lottery_type not in {"LOTO6", "LOTO7"}:
-            return {"error": "lottery_type must be LOTO6 or LOTO7"}, 400
-
-        execution_id = payload.get("execution_id") or str(uuid.uuid4())
-
-        log_and_write(
+        write_execution_log(
             execution_id=execution_id,
             function_name="fetch_loto_results",
             lottery_type=lottery_type,
-            stage="fetch",
-            status="STARTED",
-            message="fetch started",
+            stage=stage,
+            status=status,
+            message=message,
+            draw_no=draw_no,
+            error_type=error_type,
+            error_detail=error_detail,
+        )
+    except Exception as exc:
+        logger.warning(
+            "execution log write skipped/failed. execution_id=%s stage=%s status=%s error=%s",
+            execution_id,
+            stage,
+            status,
+            str(exc),
         )
 
-        result = _download_latest_result(lottery_type)
-        csv_text = _to_csv(result)
 
-        object_name = (
-            f"{lottery_type.lower()}/draw_date={result.draw_date}/"
-            f"draw_no={result.draw_no}/{execution_id}.csv"
+class _PubSubPublisher:
+    def __init__(self, project_id: str, topic_name: str) -> None:
+        from google.cloud import pubsub_v1
+
+        self._publisher = pubsub_v1.PublisherClient()
+        self._topic_path = self._publisher.topic_path(project_id, topic_name)
+
+    def publish_json(self, payload: dict[str, object]) -> str:
+        future = self._publisher.publish(self._topic_path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        return str(future.result())
+
+
+class _NoopPublisher:
+    def publish_json(self, payload: dict[str, object]) -> str:
+        logger.info("Skip Pub/Sub publish in local mode. payload=%s", payload)
+        return "local-skip"
+
+
+def _json_response(payload: dict[str, object], status_code: int = 200):
+    return payload, status_code
+
+
+def _extract_lottery_type(request) -> str:
+    # local runner と Function 実行で同じ usecase を使うため、
+    # request 側の差分は entry point 内で閉じ込める。
+    body = request.get_json(silent=True) or {}
+    lottery_type = body.get("lottery_type") or request.args.get("lottery_type") or "loto6"
+    if not lottery_type:
+        raise ValueError("lottery_type is required")
+
+    normalized = str(lottery_type).strip().lower()
+    if normalized not in {"loto6", "loto7"}:
+        raise ValueError("lottery_type must be loto6 or loto7")
+    return normalized
+
+
+def _extract_execution_id(request) -> str:
+    # 実行追跡の相関ID。未指定時もログ追跡できるよう自動採番する。
+    body = request.get_json(silent=True) or {}
+    execution_id = body.get("execution_id") or request.args.get("execution_id")
+    return str(execution_id).strip() if execution_id else str(uuid.uuid4())
+
+
+def _build_usecase(settings):
+    publisher = _NoopPublisher()
+    if not settings.is_local:
+        if not settings.gcp.project_id:
+            raise ValueError("GCP_PROJECT_ID is required in non-local mode")
+        publisher = _PubSubPublisher(settings.gcp.project_id, settings.gcp.import_topic_name)
+
+    return FetchLotoResultsUseCase(
+        settings=settings,
+        loto_client=RakutenLotoClient(),
+        storage_client=create_storage_client(settings),
+        publisher=publisher,
+    )
+
+
+def fetch_loto_results(request):
+    # request の解釈だけを Function 層に閉じ、業務処理を usecase へ寄せることで
+    # ローカル runner と本番 Function のコードパスを一致させる。
+    execution_id = str(uuid.uuid4())
+    lottery_type: str | None = None
+    try:
+        settings = get_settings()
+        lottery_type = _extract_lottery_type(request)
+        execution_id = _extract_execution_id(request)
+
+        usecase = _build_usecase(settings)
+        result = usecase.execute(
+            FetchLotoResultsInput(
+                lottery_type=lottery_type,
+                publish_import_message=True,
+                execution_id=execution_id,
+            )
         )
 
-        _upload_csv(csv_text, object_name)
-
-        message_id = _publish_import_message(
-            execution_id=execution_id,
-            lottery_type=lottery_type,
-            gcs_object=object_name,
-            draw_no=result.draw_no,
-            draw_date=result.draw_date,
-        )
-
-        log_and_write(
-            execution_id=execution_id,
-            function_name="fetch_loto_results",
+        _log_execution(
+            execution_id=result.execution_id,
             lottery_type=lottery_type,
             stage="fetch",
             status="SUCCESS",
-            message=f"fetch completed message_id={message_id}",
-            gcs_bucket=RAW_BUCKET_NAME,
-            gcs_object=object_name,
+            # prediction_runs ではなく execution_logs に Function 成否を残すことで、
+            # 入出力未確定の失敗時でも監査線を維持できる。
+            message=f"result_count={result.result_count} draw_no={result.draw_no} output_uri={result.output_uri}",
             draw_no=result.draw_no,
         )
 
-        return {
-            "status": "ok",
-            "execution_id": execution_id,
-            "gcs_bucket": RAW_BUCKET_NAME,
-            "gcs_object": object_name,
-            "draw_no": result.draw_no,
-            "draw_date": result.draw_date,
-        }, 200
-
+        logger.info(
+            "fetch_loto_results completed. execution_id=%s lottery_type=%s draw_no=%s output_uri=%s",
+            result.execution_id,
+            lottery_type,
+            result.draw_no,
+            result.output_uri,
+        )
+        return _json_response(
+            {
+                "status": "ok",
+                "execution_id": result.execution_id,
+                "lottery_type": result.lottery_type,
+                "draw_no": result.draw_no,
+                "draw_date": result.draw_date,
+                "result_count": result.result_count,
+                "output_uri": result.output_uri,
+            }
+        )
     except Exception as exc:
-        log_and_write(
-            execution_id=execution_id or "UNKNOWN",
-            function_name="fetch_loto_results",
-            lottery_type=lottery_type or None,
+        _log_execution(
+            execution_id=execution_id,
+            lottery_type=lottery_type,
             stage="fetch",
             status="FAILED",
-            message="fetch failed",
+            message="fetch_loto_results failed",
             error_type=type(exc).__name__,
             error_detail=str(exc),
         )
-        logger.exception("fetch_loto_results failed")
-        return {"error": str(exc)}, 500
+        logger.exception(
+            "fetch_loto_results failed. execution_id=%s lottery_type=%s error_message=%s",
+            execution_id,
+            lottery_type,
+            str(exc),
+        )
+        raise
+
+
+def entry_point(request):
+    return fetch_loto_results(request)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run fetch_loto_results locally")
+    parser.add_argument("--lottery-type", choices=["loto6", "loto7"], default="loto6")
+    args = parser.parse_args()
+
+    class _DummyRequest:
+        def __init__(self, lottery_type: str) -> None:
+            self.args = {"lottery_type": lottery_type}
+
+        def get_json(self, silent: bool = True):
+            del silent
+            return {}
+
+    response = fetch_loto_results(_DummyRequest(args.lottery_type))
+    print(f"status_code={response[1]}")
+    print(json.dumps(response[0], ensure_ascii=False, indent=2))

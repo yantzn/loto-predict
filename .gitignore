@@ -2,8 +2,16 @@
 __pycache__/
 *.pyc
 .env
+.env.local
 .idea/
 .vscode/
 .pytest_cache/
 # VS Code workspace
 *.code-workspace
+
+# ローカルストレージの生データ・インポートデータをGit管理対象外に
+local_storage/raw/
+local_storage/imported/
+local_storage/backfill/
+local_storage/loto6/
+local_storage/loto7/
