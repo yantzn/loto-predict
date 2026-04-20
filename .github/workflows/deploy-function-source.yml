@@ -1,4 +1,4 @@
-name: Deploy GCP Cloud Functions Source # Cloud Functionsデプロイ用ワークフロー
+name: Deploy GCP Cloud Functions Source # Cloud Functions用source object更新ワークフロー
 
 on:
   # source object 更新ワークフロー。
@@ -14,11 +14,6 @@ on:
       - "requirements-local.txt"
       - ".github/scripts/package_functions.sh"
       - ".github/workflows/deploy-function-source.yml"
-  # Terraform Infra 完了後に自動実行
-  workflow_run:
-    workflows: [ "Terraform Infra" ]
-    branches: [ main ]
-    types: [ completed ]
   workflow_dispatch:
 permissions:
   # OIDC認証やリポジトリ参照用
@@ -98,28 +93,9 @@ jobs:
           gcloud storage cp dist/import_loto_results_to_bq.zip gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
           gcloud storage cp dist/generate_prediction_and_notify.zip gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}
 
-      - name: Deploy Cloud Functions # Cloud Functionsを新しいコードで更新
+      - name: Complete source update # 実デプロイは Terraform workflow 側で実施
         shell: bash
         run: |
           set -euo pipefail
-
-          # 各 Cloud Functions を新しい source で update
-          # --update-build-config-only: build config（source）のみ更新、その他の設定は保持
-
-          gcloud functions deploy fetch-loto-results \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --update-build-config-only \
-            --source=gs://${SOURCE_BUCKET_NAME}/${FETCH_OBJECT}
-
-          gcloud functions deploy import-loto-results-to-bq \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --update-build-config-only \
-            --source=gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
-
-          gcloud functions deploy generate-prediction-and-notify \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --update-build-config-only \
-            --source=gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}
+          echo "Cloud Functions source objects were updated in GCS."
+          echo "Terraform Infra workflow will apply these changes to Cloud Functions."

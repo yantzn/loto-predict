@@ -9,6 +9,15 @@ on:
       # インフラ定義・ワークフロー自身の変更時のみ発火
       - "infra/**"
       - ".github/workflows/terraform-infra.yml"
+  # source/image 更新workflow 完了後に自動実行
+  workflow_run:
+    workflows:
+      - "Deploy GCP Cloud Functions Source"
+      - "Deploy Backfill Job Source"
+    branches:
+      - main
+    types:
+      - completed
   workflow_dispatch:
 permissions:
   # OIDC認証やリポジトリ参照用
@@ -42,6 +51,7 @@ env:
 jobs:
   # Terraformによるインフラ構築
   terraform:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     defaults:
