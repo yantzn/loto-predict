@@ -5,8 +5,6 @@ resource "google_cloud_run_v2_job" "backfill_loto_history" {
 
   labels = local.common_labels
 
-  deletion_protection = false
-
   template {
     template {
       service_account = var.cloud_run_jobs_service_account_email
