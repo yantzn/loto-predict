@@ -98,6 +98,10 @@ jobs:
                 ;;
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build failed: ${BUILD_ID}" >&2
+                gcloud builds describe "${BUILD_ID}" \
+                  --project="${GCP_PROJECT_ID}" \
+                  --region="${GCP_REGION}" \
+                  --format='yaml(status,statusDetail,logUrl,failureInfo,warnings,images)' || true
                 exit 1
                 ;;
               *)
