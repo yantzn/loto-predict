@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# jobs/backfill_loto_history/requirements.txt をルートのrequirements-base.txtで上書きする
-# - CI/CDでジョブの依存を一元管理するため
+# jobs/backfill_loto_history/ へ requirements-base.txt をコピーする
+# - Docker build のソースコンテキストに含める必要があるため
+# - Dockerfile が requirements-base.txt を参照するため
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE_REQUIREMENTS="${ROOT_DIR}/requirements-base.txt"
 JOB_DIR="${ROOT_DIR}/jobs/backfill_loto_history"
-JOB_REQUIREMENTS="${JOB_DIR}/requirements.txt"
 
 if [[ ! -f "${BASE_REQUIREMENTS}" ]]; then
   echo "Base requirements not found: ${BASE_REQUIREMENTS}" >&2
@@ -17,6 +17,6 @@ if [[ ! -d "${JOB_DIR}" ]]; then
   exit 1
 fi
 
-cp "${BASE_REQUIREMENTS}" "${JOB_REQUIREMENTS}"
+cp "${BASE_REQUIREMENTS}" "${JOB_DIR}/requirements-base.txt"
 
-echo "Generated ${JOB_REQUIREMENTS} from ${BASE_REQUIREMENTS}"
+echo "Copied ${BASE_REQUIREMENTS} to ${JOB_DIR}/requirements-base.txt"
