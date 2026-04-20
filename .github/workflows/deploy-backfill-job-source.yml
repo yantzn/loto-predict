@@ -12,8 +12,12 @@ on:
       - "src/**"
       - "requirements-base.txt"
       - ".github/scripts/sync_job_requirements.sh"
-      - ".github/scripts/terraform_infra_wait.py"
       - ".github/workflows/deploy-backfill-job-source.yml"
+  # Terraform Infra 完了後に自動実行
+  workflow_run:
+    workflows: [ "Terraform Infra" ]
+    branches: [ main ]
+    types: [ completed ]
   workflow_dispatch:
 
 permissions:
@@ -38,29 +42,8 @@ env:
   BACKFILL_DEFAULT_OUTPUT_PATH: ${{ vars.BACKFILL_DEFAULT_OUTPUT_PATH || '' }}
 
 jobs:
-  # まずTerraform Infraワークフローの競合を回避
-  wait-for-terraform:
-    # 他のTerraform Infraワークフローが終わるまで待機
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Wait until Terraform Infra is idle on this branch # 競合防止
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Checking Terraform Infra runs on branch=${BRANCH}"
-          python .github/scripts/terraform_infra_wait.py
-
   deploy:
     # Cloud Run Jobのデプロイ本体
-    needs: wait-for-terraform
     runs-on: ubuntu-latest
 
     steps:

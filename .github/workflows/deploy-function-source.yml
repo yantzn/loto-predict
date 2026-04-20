@@ -13,8 +13,12 @@ on:
       - "requirements-base.txt"
       - "requirements-local.txt"
       - ".github/scripts/package_functions.sh"
-      - ".github/scripts/terraform_infra_wait.py"
       - ".github/workflows/deploy-function-source.yml"
+  # Terraform Infra 完了後に自動実行
+  workflow_run:
+    workflows: [ "Terraform Infra" ]
+    branches: [ main ]
+    types: [ completed ]
   workflow_dispatch:
 permissions:
   # OIDC認証やリポジトリ参照用
@@ -38,30 +42,9 @@ env:
   NOTIFY_OBJECT: functions/generate_prediction_and_notify/function-source.zip
 
 jobs:
-  # Terraform apply と同時に source object を更新しないための待機ジョブ。
-  wait-for-terraform:
-    # 他のTerraform Infraワークフローが終わるまで待機
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Wait until Terraform Infra is idle on this branch # 競合防止
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Checking Terraform Infra runs on branch=${BRANCH}"
-          python .github/scripts/terraform_infra_wait.py
-
   package-and-upload:
     # このworkflowの責務は source zip の作成と GCS object 更新まで。
     # Cloud Functions リソースの実更新は terraform-infra workflow へ委譲する。
-    needs: wait-for-terraform
     runs-on: ubuntu-latest
 
     steps:
