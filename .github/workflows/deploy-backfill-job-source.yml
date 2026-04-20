@@ -136,4 +136,4 @@ jobs:
             --region="${GCP_REGION}" \
             --source=jobs/backfill_loto_history \
             --command=python \
-            --args="jobs/backfill_loto_history/main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"
+            --args="main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"

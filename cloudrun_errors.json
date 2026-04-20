@@ -1,0 +1,250 @@
+﻿[
+  {
+    "insertId": "alia3we2t35u",
+    "logName": "projects/loto-predict-491915/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "methodName": "/InternalServices.ReplaceInternalService",
+      "resourceName": "namespaces/loto-predict-491915/revisions/fetch-loto-results-00002-gus",
+      "response": {
+        "@type": "type.googleapis.com/google.cloud.run.v1.Revision",
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Revision",
+        "metadata": {
+          "annotations": {
+            "autoscaling.knative.dev/maxScale": "1",
+            "cloudfunctions.googleapis.com/trigger-type": "HTTP_TRIGGER",
+            "run.googleapis.com/base-images": "{\"worker\":\"asia-northeast1-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/python312\"}",
+            "run.googleapis.com/build-function-target": "{\"worker\":\"entry_point\"}",
+            "run.googleapis.com/build-id": "{\"worker\":\"1f7af7f4-54d3-4c8e-a6db-4ac400ccc2d1\"}",
+            "run.googleapis.com/build-source-location": "{\"worker\":\"gs://gcf-v2-sources-867041958371-asia-northeast1/fetch-loto-results/function-source.zip#1776649672062834\"}",
+            "run.googleapis.com/client-name": "cloudfunctions",
+            "run.googleapis.com/operation-id": "caf7334a-afa3-4c99-b79d-fdf6f3f58dc3",
+            "run.googleapis.com/startup-cpu-boost": "true",
+            "serving.knative.dev/creator": "service-867041958371@gcf-admin-robot.iam.gserviceaccount.com"
+          },
+          "creationTimestamp": "2026-04-20T01:48:37.353330Z",
+          "generation": 1,
+          "labels": {
+            "cloud.googleapis.com/location": "asia-northeast1",
+            "goog-cloudfunctions-runtime": "python312",
+            "goog-drz-cloudfunctions-id": "fetch-loto-results",
+            "goog-drz-cloudfunctions-location": "asia-northeast1",
+            "goog-managed-by": "cloudfunctions",
+            "run.googleapis.com/startupProbeType": "Default",
+            "serving.knative.dev/configuration": "fetch-loto-results",
+            "serving.knative.dev/configurationGeneration": "2",
+            "serving.knative.dev/route": "fetch-loto-results",
+            "serving.knative.dev/service": "fetch-loto-results",
+            "serving.knative.dev/serviceUid": "7321effa-a780-4aa9-b0a1-73e1ac761b9c"
+          },
+          "name": "fetch-loto-results-00002-gus",
+          "namespace": "867041958371",
+          "ownerReferences": [
+            {
+              "apiVersion": "serving.knative.dev/v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Configuration",
+              "name": "fetch-loto-results",
+              "uid": "81f248ee-2d2e-4022-8a6f-d2719e1ff256"
+            }
+          ],
+          "resourceVersion": "AAZP2n/JyRU",
+          "selfLink": "/apis/serving.knative.dev/v1/namespaces/867041958371/revisions/fetch-loto-results-00002-gus",
+          "uid": "4218748c-4cb8-41b1-8e2a-0c73746805f0"
+        },
+        "spec": {
+          "containerConcurrency": 1,
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "APP_TIMEZONE",
+                  "value": "Asia/Tokyo"
+                },
+                {
+                  "name": "BIGQUERY_DATASET",
+                  "value": "loto_predict"
+                },
+                {
+                  "name": "BQ_TABLE_EXECUTION_LOGS",
+                  "value": "execution_logs"
+                },
+                {
+                  "name": "GCP_PROJECT_ID",
+                  "value": "loto-predict-491915"
+                },
+                {
+                  "name": "GCP_REGION",
+                  "value": "asia-northeast1"
+                },
+                {
+                  "name": "GCS_BUCKET_RAW",
+                  "value": "loto-predict-491915-loto-raw-f51fd5"
+                },
+                {
+                  "name": "LOG_EXECUTION_ID",
+                  "value": "true"
+                },
+                {
+                  "name": "LOG_LEVEL",
+                  "value": "INFO"
+                },
+                {
+                  "name": "PUBSUB_IMPORT_TOPIC",
+                  "value": "import-loto-results"
+                }
+              ],
+              "image": "asia-northeast1-docker.pkg.dev/loto-predict-491915/gcf-artifacts/loto--predict--491915__asia--northeast1__fetch--loto--results@sha256:75d5dc1c65f470fea06336c5852731a46aac09b114c6b4ea251ab48e323a4b2f",
+              "name": "worker",
+              "ports": [
+                {
+                  "containerPort": 8080,
+                  "name": "http1"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "0.3333",
+                  "memory": "512M"
+                }
+              },
+              "startupProbe": {
+                "failureThreshold": 1,
+                "periodSeconds": 240,
+                "tcpSocket": {
+                  "port": 8080
+                },
+                "timeoutSeconds": 240
+              }
+            }
+          ],
+          "runtimeClassName": "run.googleapis.com/linux-base-image-update",
+          "serviceAccountName": "loto-fn-runtime-6df816@loto-predict-491915.iam.gserviceaccount.com",
+          "timeoutSeconds": 120
+        },
+        "status": {
+          "conditions": [
+            {
+              "lastTransitionTime": "2026-04-20T01:48:45.659413Z",
+              "message": "The user-provided container failed to start and listen on the port defined provided by the PORT=8080 environment variable within the allocated timeout. This can happen when the container port is misconfigured or if the timeout is too short. The health check timeout can be extended. Logs for this revision might contain more information.\n\nLogs URL: https://console.cloud.google.com/logs/viewer?project=loto-predict-491915&resource=cloud_run_revision/service_name/fetch-loto-results/revision_name/fetch-loto-results-00002-gus&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22fetch-loto-results%22%0Aresource.labels.revision_name%3D%22fetch-loto-results-00002-gus%22 \nFor more troubleshooting guidance, see https://cloud.google.com/run/docs/troubleshooting#container-failed-to-start",
+              "reason": "HealthCheckContainerError",
+              "status": "False",
+              "type": "Ready"
+            },
+            {
+              "lastTransitionTime": "2026-04-20T01:48:45.659413Z",
+              "message": "The user-provided container failed to start and listen on the port defined provided by the PORT=8080 environment variable within the allocated timeout. This can happen when the container port is misconfigured or if the timeout is too short. The health check timeout can be extended. Logs for this revision might contain more information.\n\nLogs URL: https://console.cloud.google.com/logs/viewer?project=loto-predict-491915&resource=cloud_run_revision/service_name/fetch-loto-results/revision_name/fetch-loto-results-00002-gus&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22fetch-loto-results%22%0Aresource.labels.revision_name%3D%22fetch-loto-results-00002-gus%22 \nFor more troubleshooting guidance, see https://cloud.google.com/run/docs/troubleshooting#container-failed-to-start",
+              "reason": "HealthCheckContainerError",
+              "status": "False",
+              "type": "ContainerHealthy"
+            },
+            {
+              "lastTransitionTime": "2026-04-20T01:48:42.744904Z",
+              "message": "Container image import completed in 4.77s.",
+              "status": "True",
+              "type": "ContainerReady"
+            },
+            {
+              "lastTransitionTime": "2026-04-20T01:48:44.271859Z",
+              "message": "Provisioning imported containers completed in 1.53s. Checking container health. This will wait for up to 4m for the configured startup probe, including an initial delay of 0s.",
+              "status": "True",
+              "type": "ResourcesAvailable"
+            },
+            {
+              "lastTransitionTime": "2026-04-20T01:48:44.271859Z",
+              "message": "System will retry after 00:00 from lastTransitionTime for attempt 0.",
+              "reason": "ImmediateRetry",
+              "severity": "Info",
+              "status": "True",
+              "type": "Retry"
+            }
+          ],
+          "containerStatuses": [
+            {
+              "imageDigest": "asia-northeast1-docker.pkg.dev/loto-predict-491915/gcf-artifacts/loto--predict--491915__asia--northeast1__fetch--loto--results@sha256:75d5dc1c65f470fea06336c5852731a46aac09b114c6b4ea251ab48e323a4b2f",
+              "name": "worker"
+            }
+          ],
+          "imageDigest": "asia-northeast1-docker.pkg.dev/loto-predict-491915/gcf-artifacts/loto--predict--491915__asia--northeast1__fetch--loto--results@sha256:75d5dc1c65f470fea06336c5852731a46aac09b114c6b4ea251ab48e323a4b2f",
+          "logUrl": "https://console.cloud.google.com/logs/viewer?project=loto-predict-491915&resource=cloud_run_revision/service_name/fetch-loto-results/revision_name/fetch-loto-results-00002-gus&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22fetch-loto-results%22%0Aresource.labels.revision_name%3D%22fetch-loto-results-00002-gus%22",
+          "observedGeneration": 1
+        }
+      },
+      "serviceName": "run.googleapis.com",
+      "status": {
+        "code": 9,
+        "message": "Ready condition status changed to False for Revision fetch-loto-results-00002-gus with message: The user-provided container failed to start and listen on the port defined provided by the PORT=8080 environment variable within the allocated timeout. This can happen when the container port is misconfigured or if the timeout is too short. The health check timeout can be extended. Logs for this revision might contain more information.\n\nLogs URL: https://console.cloud.google.com/logs/viewer?project=loto-predict-491915&resource=cloud_run_revision/service_name/fetch-loto-results/revision_name/fetch-loto-results-00002-gus&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22fetch-loto-results%22%0Aresource.labels.revision_name%3D%22fetch-loto-results-00002-gus%22 \nFor more troubleshooting guidance, see https://cloud.google.com/run/docs/troubleshooting#container-failed-to-start"
+      }
+    },
+    "receiveTimestamp": "2026-04-20T01:48:46.048613278Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "fetch-loto-results",
+        "location": "asia-northeast1",
+        "project_id": "loto-predict-491915",
+        "revision_name": "fetch-loto-results-00002-gus",
+        "service_name": "fetch-loto-results"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "ERROR",
+    "timestamp": "2026-04-20T01:48:45.669989Z"
+  },
+  {
+    "insertId": "69e585fd000a0b873293690d",
+    "labels": {
+      "goog-drz-cloudfunctions-id": "fetch-loto-results",
+      "goog-drz-cloudfunctions-location": "asia-northeast1",
+      "goog-managed-by": "cloudfunctions",
+      "instanceId": "008c15ff0838f909499f8fe7a62ef067f8cdc49d0c4b163ff0e58c01e6900c02c5a450c8e855e12ab85155ab6b194cc230b0054cb0b1c99b4b997dfcd10e2d43d62ac75e63c4086e42e695e44c55d9e64721",
+      "run.googleapis.com/base_image_versions": "us-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/python312:python312_20260405_3_12_12_RC00"
+    },
+    "logName": "projects/loto-predict-491915/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-04-20T01:48:45.785156835Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "fetch-loto-results",
+        "location": "asia-northeast1",
+        "project_id": "loto-predict-491915",
+        "revision_name": "fetch-loto-results-00002-gus",
+        "service_name": "fetch-loto-results"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "ERROR",
+    "textPayload": "Default STARTUP TCP probe failed 1 time consecutively for container \"worker\" on port 8080. The instance was not started.\nConnection failed with status CANCELLED.",
+    "timestamp": "2026-04-20T01:48:45.658311Z"
+  },
+  {
+    "errorGroups": [
+      {
+        "id": "CP3hvJTq9d3Afw"
+      }
+    ],
+    "insertId": "69e585fd0005d71d91a2aaa7",
+    "labels": {
+      "goog-drz-cloudfunctions-id": "fetch-loto-results",
+      "goog-drz-cloudfunctions-location": "asia-northeast1",
+      "goog-managed-by": "cloudfunctions",
+      "instanceId": "008c15ff0838f909499f8fe7a62ef067f8cdc49d0c4b163ff0e58c01e6900c02c5a450c8e855e12ab85155ab6b194cc230b0054cb0b1c99b4b997dfcd10e2d43d62ac75e63c4086e42e695e44c55d9e64721",
+      "run.googleapis.com/base_image_versions": "us-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/python312:python312_20260405_3_12_12_RC00"
+    },
+    "logName": "projects/loto-predict-491915/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-04-20T01:48:45.385372458Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "fetch-loto-results",
+        "location": "asia-northeast1",
+        "project_id": "loto-predict-491915",
+        "revision_name": "fetch-loto-results-00002-gus",
+        "service_name": "fetch-loto-results"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "ERROR",
+    "textPayload": "Traceback (most recent call last):\n  File \"/layers/google.python.pip/pip/bin/functions-framework\", line 6, in <module>\n    sys.exit(_cli())\n             ^^^^^^\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/click/core.py\", line 1161, in __call__\n    return self.main(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/click/core.py\", line 1082, in main\n    rv = self.invoke(ctx)\n         ^^^^^^^^^^^^^^^^\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/click/core.py\", line 1443, in invoke\n    return ctx.invoke(self.callback, **ctx.params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/click/core.py\", line 788, in invoke\n    return __callback(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/functions_framework/_cli.py\", line 47, in _cli\n    app = create_app(target, source, signature_type)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/functions_framework/__init__.py\", line 406, in create_app\n    raise e from None\n  File \"/layers/google.python.pip/pip/lib/python3.12/site-packages/functions_framework/__init__.py\", line 387, in create_app\n    spec.loader.exec_module(source_module)\n  File \"<frozen importlib._bootstrap_external>\", line 999, in exec_module\n  File \"<frozen importlib._bootstrap>\", line 488, in _call_with_frames_removed\n  File \"/workspace/main.py\", line 12, in <module>\n    PROJECT_ROOT = CURRENT_DIR.parents[1]\n                   ~~~~~~~~~~~~~~~~~~~^^^\n  File \"/layers/google.python.runtime/python/lib/python3.12/pathlib.py\", line 282, in __getitem__\n    raise IndexError(idx)\nIndexError: 1",
+    "timestamp": "2026-04-20T01:48:45.382749Z"
+  }
+]
