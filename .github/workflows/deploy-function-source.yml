@@ -1,8 +1,7 @@
-name: Deploy GCP Cloud Functions Source # Cloud Functions用source object更新ワークフロー
+name: Deploy GCP Cloud Functions Source # Cloud Functionsコードデプロイ用ワークフロー
 
 on:
-  # source object 更新ワークフロー。
-  # Cloud Functions Gen2 本体の更新(apply/rollout)は Terraform workflow 側で実施する。
+  # Cloud Functions のコード変更時にデプロイ。
   push:
     branches:
       - main
@@ -14,6 +13,11 @@ on:
       - "requirements-local.txt"
       - ".github/scripts/package_functions.sh"
       - ".github/workflows/deploy-function-source.yml"
+  # Terraform Infra 完了後に自動実行
+  workflow_run:
+    workflows: [ "Terraform Infra" ]
+    branches: [ main ]
+    types: [ completed ]
   workflow_dispatch:
 permissions:
   # OIDC認証やリポジトリ参照用
@@ -37,14 +41,60 @@ env:
   NOTIFY_OBJECT: functions/generate_prediction_and_notify/function-source.zip
 
 jobs:
-  package-and-upload:
-    # このworkflowの責務は source zip の作成と GCS object 更新まで。
-    # Cloud Functions リソースの実更新は terraform-infra workflow へ委譲する。
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    # このworkflowの責務は source zip 作成・GCS更新・Cloud Functions更新。
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Wait for Terraform Infra if running # Terraform実行中は完了待機、失敗時は中断
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          WORKFLOW_FILE: terraform-infra.yml
+        run: |
+          set -euo pipefail
+
+          api_base="https://api.github.com/repos/${REPO}/actions"
+
+          active_run_id="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api_base}/workflows/${WORKFLOW_FILE}/runs?branch=${BRANCH}&per_page=20" | python -c "import json,sys; runs=json.load(sys.stdin).get('workflow_runs',[]); active=[r for r in runs if r.get('status') in ('queued','in_progress')]; print(active[0]['id'] if active else '')")"
+
+          if [[ -z "${active_run_id}" ]]; then
+            echo "No active Terraform Infra run found on branch ${BRANCH}."
+            exit 0
+          fi
+
+          echo "Waiting for Terraform Infra run: ${active_run_id}"
+          for _ in $(seq 1 240); do
+            read -r status conclusion < <(curl -fsSL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api_base}/runs/${active_run_id}" | python -c "import json,sys; r=json.load(sys.stdin); print(r.get('status',''), r.get('conclusion',''))")
+
+            echo "Terraform Infra status=${status} conclusion=${conclusion}"
+
+            if [[ "${status}" == "completed" ]]; then
+              if [[ "${conclusion}" == "success" ]]; then
+                echo "Terraform Infra completed successfully."
+                exit 0
+              fi
+              echo "Terraform Infra finished with conclusion=${conclusion}. Stop this workflow." >&2
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting for Terraform Infra run ${active_run_id}." >&2
+          exit 1
 
       - name: Validate required variables # GCP変数の未設定チェック
         shell: bash
@@ -93,9 +143,25 @@ jobs:
           gcloud storage cp dist/import_loto_results_to_bq.zip gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT}
           gcloud storage cp dist/generate_prediction_and_notify.zip gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT}
 
-      - name: Complete source update # 実デプロイは Terraform workflow 側で実施
+      - name: Deploy Cloud Functions # Cloud Functionsを新しいコードで更新
         shell: bash
         run: |
           set -euo pipefail
-          echo "Cloud Functions source objects were updated in GCS."
-          echo "Terraform Infra workflow will apply these changes to Cloud Functions."
+
+          gcloud functions deploy fetch-loto-results \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --source=gs://${SOURCE_BUCKET_NAME}/${FETCH_OBJECT} \
+            --gen2
+
+          gcloud functions deploy import-loto-results-to-bq \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --source=gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT} \
+            --gen2
+
+          gcloud functions deploy generate-prediction-and-notify \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --source=gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT} \
+            --gen2
