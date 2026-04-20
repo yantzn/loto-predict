@@ -75,10 +75,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud builds submit jobs/backfill_loto_history \
+          BUILD_ID="$(gcloud builds submit jobs/backfill_loto_history \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
-            --tag="${BACKFILL_IMAGE_URI}"
+            --tag="${BACKFILL_IMAGE_URI}" \
+            --async \
+            --format='value(id)')"
+
+          test -n "${BUILD_ID}"
+          echo "Started Cloud Build: ${BUILD_ID}"
+
+          while true; do
+            STATUS="$(gcloud builds describe "${BUILD_ID}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format='value(status)')"
+
+            echo "Cloud Build status: ${STATUS}"
+            case "${STATUS}" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build failed: ${BUILD_ID}" >&2
+                exit 1
+                ;;
+              *)
+                sleep 5
+                ;;
+            esac
+          done
 
       - name: Complete image update # 実デプロイは Terraform workflow 側で実施
         shell: bash
