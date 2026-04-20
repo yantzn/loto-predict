@@ -40,6 +40,7 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
   lifecycle {
     ignore_changes = [
       build_config[0].source[0].storage_source[0].generation,
+      service_config[0].environment_variables,
     ]
   }
 
@@ -100,6 +101,7 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
   lifecycle {
     ignore_changes = [
       build_config[0].source[0].storage_source[0].generation,
+      service_config[0].environment_variables,
     ]
   }
 
@@ -177,6 +179,7 @@ resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
   lifecycle {
     ignore_changes = [
       build_config[0].source[0].storage_source[0].generation,
+      service_config[0].environment_variables,
     ]
   }
 
