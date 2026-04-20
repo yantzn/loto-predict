@@ -1,5 +1,5 @@
 
-name: Deploy Backfill Job Source # Cloud Run Job (backfill) 用image更新ワークフロー
+name: Deploy Backfill Job Source # Cloud Run Job (backfill) コードデプロイ用ワークフロー
 
 on:
   # mainブランチへのpushや手動実行で発火
@@ -13,6 +13,11 @@ on:
       - "requirements-base.txt"
       - ".github/scripts/sync_job_requirements.sh"
       - ".github/workflows/deploy-backfill-job-source.yml"
+  # Terraform Infra 完了後に自動実行
+  workflow_run:
+    workflows: [ "Terraform Infra" ]
+    branches: [ main ]
+    types: [ completed ]
   workflow_dispatch:
 
 permissions:
@@ -31,20 +36,66 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   JOB_NAME: backfill-loto-history
-  BACKFILL_IMAGE_URI: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/loto-predict/backfill-loto-history:latest
   BACKFILL_DEFAULT_LOTTERY_TYPE: ${{ vars.BACKFILL_DEFAULT_LOTTERY_TYPE || 'loto6' }}
   BACKFILL_DEFAULT_START_DATE: ${{ vars.BACKFILL_DEFAULT_START_DATE || '2026-01-01' }}
   BACKFILL_DEFAULT_END_DATE: ${{ vars.BACKFILL_DEFAULT_END_DATE || '2026-12-31' }}
   BACKFILL_DEFAULT_OUTPUT_PATH: ${{ vars.BACKFILL_DEFAULT_OUTPUT_PATH || '' }}
 
 jobs:
-  build-and-push:
-    # Cloud Run Jobイメージのビルド・保存までを担当
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    # Cloud Run Jobへソースから直接デプロイする
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Wait for Terraform Infra if running # Terraform実行中は完了待機、失敗時は中断
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          WORKFLOW_FILE: terraform-infra.yml
+        run: |
+          set -euo pipefail
+
+          api_base="https://api.github.com/repos/${REPO}/actions"
+
+          active_run_id="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api_base}/workflows/${WORKFLOW_FILE}/runs?branch=${BRANCH}&per_page=20" | python -c "import json,sys; runs=json.load(sys.stdin).get('workflow_runs',[]); active=[r for r in runs if r.get('status') in ('queued','in_progress')]; print(active[0]['id'] if active else '')")"
+
+          if [[ -z "${active_run_id}" ]]; then
+            echo "No active Terraform Infra run found on branch ${BRANCH}."
+            exit 0
+          fi
+
+          echo "Waiting for Terraform Infra run: ${active_run_id}"
+          for _ in $(seq 1 240); do
+            read -r status conclusion < <(curl -fsSL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api_base}/runs/${active_run_id}" | python -c "import json,sys; r=json.load(sys.stdin); print(r.get('status',''), r.get('conclusion',''))")
+
+            echo "Terraform Infra status=${status} conclusion=${conclusion}"
+
+            if [[ "${status}" == "completed" ]]; then
+              if [[ "${conclusion}" == "success" ]]; then
+                echo "Terraform Infra completed successfully."
+                exit 0
+              fi
+              echo "Terraform Infra finished with conclusion=${conclusion}. Stop this workflow." >&2
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting for Terraform Infra run ${active_run_id}." >&2
+          exit 1
 
       - name: Validate required variables # GCP変数の未設定チェック
         shell: bash
@@ -71,48 +122,18 @@ jobs:
           chmod +x ./.github/scripts/sync_job_requirements.sh
           bash ./.github/scripts/sync_job_requirements.sh
 
-      - name: Build and push backfill image # Cloud Buildでimageを保存
+      - name: Deploy Cloud Run Job from source # Cloud Run Jobデプロイ
         shell: bash
         run: |
           set -euo pipefail
-          BUILD_ID="$(gcloud builds submit jobs/backfill_loto_history \
+          OUTPUT_PATH="${BACKFILL_DEFAULT_OUTPUT_PATH}"
+          if [[ -z "${OUTPUT_PATH}" ]]; then
+            OUTPUT_PATH="gs://${GCP_PROJECT_ID}-loto-raw/backfill/default.csv"
+          fi
+
+          gcloud run jobs deploy "${JOB_NAME}" \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
-            --tag="${BACKFILL_IMAGE_URI}" \
-            --async \
-            --format='value(id)')"
-
-          test -n "${BUILD_ID}"
-          echo "Started Cloud Build: ${BUILD_ID}"
-
-          while true; do
-            STATUS="$(gcloud builds describe "${BUILD_ID}" \
-              --project="${GCP_PROJECT_ID}" \
-              --region="${GCP_REGION}" \
-              --format='value(status)')"
-
-            echo "Cloud Build status: ${STATUS}"
-            case "${STATUS}" in
-              SUCCESS)
-                break
-                ;;
-              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-                echo "Cloud Build failed: ${BUILD_ID}" >&2
-                gcloud builds describe "${BUILD_ID}" \
-                  --project="${GCP_PROJECT_ID}" \
-                  --region="${GCP_REGION}" \
-                  --format='yaml(status,statusDetail,logUrl,failureInfo,warnings,images)' || true
-                exit 1
-                ;;
-              *)
-                sleep 5
-                ;;
-            esac
-          done
-
-      - name: Complete image update # 実デプロイは Terraform workflow 側で実施
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Backfill image was pushed: ${BACKFILL_IMAGE_URI}"
-          echo "Terraform Infra workflow will apply this image to Cloud Run Job."
+            --source=jobs/backfill_loto_history \
+            --command=python \
+            --args="jobs/backfill_loto_history/main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"
