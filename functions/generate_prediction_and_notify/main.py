@@ -31,6 +31,49 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
+def _log_execution(
+    *,
+    execution_id: str,
+    lottery_type: str | None,
+    stage: str,
+    status: str,
+    message: str,
+    error_type: str | None = None,
+    error_detail: str | None = None,
+) -> None:
+    # local では監査用 env が未設定でも本体処理の確認を優先する。
+    project_id = os.getenv("GCP_PROJECT_ID")
+    dataset_id = os.getenv("BQ_DATASET") or os.getenv("BIGQUERY_DATASET")
+    if not project_id or not dataset_id:
+        logger.warning(
+            "execution log write skipped due to missing env. execution_id=%s stage=%s status=%s",
+            execution_id,
+            stage,
+            status,
+        )
+        return
+
+    try:
+        write_execution_log(
+            execution_id=execution_id,
+            function_name="generate_prediction_and_notify",
+            lottery_type=lottery_type,
+            stage=stage,
+            status=status,
+            message=message,
+            error_type=error_type,
+            error_detail=error_detail,
+        )
+    except Exception as exc:
+        logger.warning(
+            "execution log write skipped/failed. execution_id=%s stage=%s status=%s error=%s",
+            execution_id,
+            stage,
+            status,
+            str(exc),
+        )
+
+
 def _decode_pubsub_message(cloud_event) -> dict[str, object]:
     # CloudEvent/Raw辞書どちらで渡されても同じ形式に正規化して扱う。
     envelope = getattr(cloud_event, "data", cloud_event)
@@ -121,9 +164,8 @@ def generate_prediction_and_notify(event, context=None):
             latest_draw_date=latest_draw_date,
         )
 
-        write_execution_log(
+        _log_execution(
             execution_id=execution_id,
-            function_name="generate_prediction_and_notify",
             lottery_type=lottery_type,
             stage="generate_notify",
             status="SUCCESS",
@@ -145,9 +187,8 @@ def generate_prediction_and_notify(event, context=None):
         return result
     except Exception as exc:
         # FAILED時は prediction_runs を増やさず、execution_logs 側へ監査を寄せる。
-        write_execution_log(
+        _log_execution(
             execution_id=execution_id,
-            function_name="generate_prediction_and_notify",
             lottery_type=lottery_type,
             stage="generate_notify",
             status="FAILED",

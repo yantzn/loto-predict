@@ -295,7 +295,7 @@ class RakutenLotoClient:
             rf"回号\s*第0*(?P<draw_no>\d+)回\s*"
             rf"抽せん日\s*(?P<draw_date>\d{{4}}/\d{{2}}/\d{{2}})\s*"
             rf"本数字\s*(?P<main>(?:\d+\s+){{{spec.pick_count - 1}}}\d+)\s*"
-            rf"ボーナス数字\s*[\(（](?P<bonus>(?:\d+\s*){{{spec.bonus_count}}})[\)）]",
+            rf"ボーナス数字\s*(?P<bonus>(?:[\(（]?\d+[\)）]?\s*){{{spec.bonus_count}}})",
             flags=re.MULTILINE,
         )
 

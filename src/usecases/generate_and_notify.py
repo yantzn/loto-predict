@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import uuid4
 
 from src.domain.prediction import generate_predictions
+from src.domain.score_optimizer import optimize_score_weights
 from src.domain.statistics import calculate_number_scores
 
 
@@ -54,7 +55,14 @@ class GenerateAndNotifyUseCase:
 
         try:
             draws = self._extract_draws(history_rows, normalized_lottery_type)
-            number_scores = calculate_number_scores(draws)
+            tuned = optimize_score_weights(
+                draws=draws,
+                lottery_type=normalized_lottery_type,
+                prediction_count=prediction_count,
+                backtest_rounds=min(20, max(8, len(draws) // 10)),
+                min_train_draws=min(80, max(40, history_limit // 2)),
+            )
+            number_scores = calculate_number_scores(draws, weights=tuned.weights)
             resolved_draw_no = latest_draw_no if latest_draw_no is not None else self._latest_draw_no(history_rows)
             resolved_draw_date = latest_draw_date if latest_draw_date is not None else self._latest_draw_date(history_rows)
 
@@ -85,15 +93,25 @@ class GenerateAndNotifyUseCase:
                 "status": "SUCCESS" if notify_enabled else "DRY_RUN",
                 "latest_draw_no": resolved_draw_no,
                 "draw_date": resolved_draw_date,
+                "score_weights": {
+                    "frequency": tuned.weights.frequency,
+                    "recent": tuned.weights.recent,
+                    "recency": tuned.weights.recency,
+                },
+                "optimizer_score": tuned.score,
+                "optimizer_rounds": tuned.evaluated_rounds,
             }
             self.repository.save_prediction_run(run_payload)
 
             self.logger.info(
-                "Generated and notified. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
+                "Generated and notified. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s tuned_weights=%s optimizer_score=%.3f optimizer_rounds=%s",
                 execution_id,
                 normalized_lottery_type,
                 history_limit,
                 len(predictions),
+                tuned.weights,
+                tuned.score,
+                tuned.evaluated_rounds,
             )
             return {
                 "execution_id": execution_id,
@@ -103,6 +121,13 @@ class GenerateAndNotifyUseCase:
                 "message": message,
                 "latest_draw_no": resolved_draw_no,
                 "latest_draw_date": resolved_draw_date,
+                "score_weights": {
+                    "frequency": tuned.weights.frequency,
+                    "recent": tuned.weights.recent,
+                    "recency": tuned.weights.recency,
+                },
+                "optimizer_score": tuned.score,
+                "optimizer_rounds": tuned.evaluated_rounds,
             }
         except Exception as exc:
             # 失敗時の監査は execution_logs 側を主に使う前提。

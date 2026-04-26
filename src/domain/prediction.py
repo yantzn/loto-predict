@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+from itertools import islice
 
 
 def _lottery_spec(lottery_type: str) -> tuple[int, int, int]:
@@ -37,6 +38,25 @@ def _build_weights(
     }
 
 
+def _build_ticket_weights(
+    base_weights: dict[int, float],
+    ticket_index: int,
+    number_usage: dict[int, int],
+) -> dict[int, float]:
+    # 1口目は従来どおりの重みを使い、2口目以降は段階的にフラット化して
+    # 似た組合せに偏り続けるのを抑える。
+    if ticket_index <= 0:
+        return dict(base_weights)
+
+    temperature = max(0.55, 1.0 - (0.1 * ticket_index))
+    usage_penalty_strength = 0.35
+    return {
+        number: pow(weight, temperature)
+        / (1.0 + (number_usage.get(number, 0) * usage_penalty_strength))
+        for number, weight in base_weights.items()
+    }
+
+
 def _weighted_sample_without_replacement(
     population: list[int],
     weights: dict[int, float],
@@ -62,6 +82,120 @@ def _order_by_score(selected: list[int], weights: dict[int, float]) -> list[int]
     # 抽選は重み付きランダムで多様性を維持しつつ、最終表示はスコア優先で並べる。
     # 同点時は数値昇順に固定して、表示順の揺れを避ける。
     return sorted(selected, key=lambda number: (-weights.get(number, 1.0), number))
+
+
+def _rank_numbers_by_weight(weights: dict[int, float]) -> list[int]:
+    return [
+        number
+        for number, _ in sorted(
+            weights.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+
+def _build_anchor_ticket(
+    ranked_numbers: list[int],
+    pick_count: int,
+) -> list[int]:
+    return list(islice(ranked_numbers, pick_count))
+
+
+def _build_balanced_ticket(
+    ranked_numbers: list[int],
+    pick_count: int,
+) -> list[int]:
+    # 上位偏重だけだと口ごとの類似度が高くなるため、
+    # 上位4割と中位帯を混ぜた1口を固定で持つ。
+    if len(ranked_numbers) <= pick_count:
+        return list(ranked_numbers)
+
+    upper_count = max(1, int(pick_count * 0.6))
+    upper = ranked_numbers[:upper_count]
+    middle_start = upper_count
+    middle_end = min(len(ranked_numbers), upper_count + (pick_count * 2))
+    middle_pool = ranked_numbers[middle_start:middle_end]
+    needed = pick_count - len(upper)
+    middle = middle_pool[:needed]
+    return upper + middle
+
+
+def _build_even_odd_ticket(
+    ranked_numbers: list[int],
+    pick_count: int,
+) -> list[int]:
+    top_pool = ranked_numbers[: max(pick_count * 3, pick_count)]
+    evens = [number for number in top_pool if number % 2 == 0]
+    odds = [number for number in top_pool if number % 2 == 1]
+
+    even_target = pick_count // 2
+    odd_target = pick_count - even_target
+    ticket = evens[:even_target] + odds[:odd_target]
+
+    if len(ticket) < pick_count:
+        rest = [number for number in top_pool if number not in ticket]
+        ticket.extend(rest[: pick_count - len(ticket)])
+    return ticket[:pick_count]
+
+
+def _build_spread_ticket(
+    ranked_numbers: list[int],
+    pick_count: int,
+) -> list[int]:
+    top_pool = ranked_numbers[: max(pick_count * 3, pick_count)]
+    ticket: list[int] = []
+
+    for index in range(0, len(top_pool), 2):
+        if len(ticket) >= pick_count:
+            break
+        ticket.append(top_pool[index])
+
+    if len(ticket) < pick_count:
+        for number in top_pool:
+            if number in ticket:
+                continue
+            ticket.append(number)
+            if len(ticket) >= pick_count:
+                break
+
+    return ticket[:pick_count]
+
+
+def _build_mixed_depth_ticket(
+    ranked_numbers: list[int],
+    pick_count: int,
+) -> list[int]:
+    # 上位だけに寄せすぎず、中位・下位候補を混ぜる口を1つ作る。
+    head = ranked_numbers[: max(2, pick_count // 3)]
+    mid_start = max(2, pick_count // 3)
+    mid_end = min(len(ranked_numbers), mid_start + (pick_count * 2))
+    middle = ranked_numbers[mid_start:mid_end]
+    tail = ranked_numbers[mid_end : min(len(ranked_numbers), mid_end + (pick_count * 2))]
+
+    ticket = []
+    ticket.extend(head[: max(2, pick_count // 3)])
+    ticket.extend(middle[: max(2, pick_count // 3)])
+    ticket.extend(tail[: pick_count - len(ticket)])
+
+    if len(ticket) < pick_count:
+        rest = [number for number in ranked_numbers if number not in ticket]
+        ticket.extend(rest[: pick_count - len(ticket)])
+
+    return ticket[:pick_count]
+
+
+def _build_strategy_tickets(
+    ranked_numbers: list[int],
+    pick_count: int,
+) -> list[list[int]]:
+    strategies = [
+        _build_anchor_ticket(ranked_numbers, pick_count),
+        _build_balanced_ticket(ranked_numbers, pick_count),
+        _build_even_odd_ticket(ranked_numbers, pick_count),
+        _build_spread_ticket(ranked_numbers, pick_count),
+        _build_mixed_depth_ticket(ranked_numbers, pick_count),
+    ]
+    return [ticket for ticket in strategies if len(ticket) == pick_count]
 
 
 def generate_predictions(
@@ -105,11 +239,30 @@ def generate_predictions(
 
     population = list(range(number_min, number_max + 1))
     score_map = _normalize_scores(number_scores)
-    weights = _build_weights(number_min, number_max, score_map)
+    base_weights = _build_weights(number_min, number_max, score_map)
+    ranked_numbers = _rank_numbers_by_weight(base_weights)
     random_source = rng if rng is not None else random.Random(seed)
 
     predictions: list[list[int]] = []
     seen_combinations: set[tuple[int, ...]] = set()
+    number_usage: dict[int, int] = {}
+
+    # 先に戦略ポートフォリオで複数タイプの口を確保し、
+    # その後に重み付きランダムで補完する。
+    for strategy_ticket in _build_strategy_tickets(ranked_numbers, pick_count):
+        if len(predictions) >= prediction_count:
+            break
+
+        ordered = _order_by_score(strategy_ticket, base_weights)
+        ordered_key = tuple(sorted(ordered))
+        if ordered_key in seen_combinations:
+            continue
+
+        seen_combinations.add(ordered_key)
+        predictions.append(ordered)
+        for number in ordered:
+            number_usage[number] = number_usage.get(number, 0) + 1
+
     # 組合せ空間が大きいため、理論上の上限を毎回総当たりせず、
     # 生成済みの重複検知と試行回数上限で現実的に打ち切る。
     max_attempts = max(200, prediction_count * 200)
@@ -117,18 +270,21 @@ def generate_predictions(
 
     while len(predictions) < prediction_count and attempts < max_attempts:
         attempts += 1
+        ticket_weights = _build_ticket_weights(base_weights, len(predictions), number_usage)
         sampled = _weighted_sample_without_replacement(
             population=population,
-            weights=weights,
+            weights=ticket_weights,
             sample_size=pick_count,
             rng=random_source,
         )
-        candidate = _order_by_score(sampled, weights)
+        candidate = _order_by_score(sampled, ticket_weights)
         candidate_key = tuple(sorted(candidate))
         if candidate_key in seen_combinations:
             continue
         seen_combinations.add(candidate_key)
         predictions.append(candidate)
+        for number in candidate:
+            number_usage[number] = number_usage.get(number, 0) + 1
 
     if len(predictions) != prediction_count:
         raise ValueError(

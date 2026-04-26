@@ -30,8 +30,6 @@ def setup_logger() -> logging.Logger:
     Backfill 実行時の状況をコンソールとファイルの両方に残す。
     取得失敗や 0 件時の切り分けをしやすくするため、stack trace も保存する。
     """
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
     logger = logging.getLogger("backfill_loto_history")
     logger.setLevel(LOG_LEVEL)
 
@@ -46,12 +44,19 @@ def setup_logger() -> logging.Logger:
     stream_handler.setLevel(LOG_LEVEL)
     stream_handler.setFormatter(formatter)
 
-    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
-    file_handler.setLevel(LOG_LEVEL)
-    file_handler.setFormatter(formatter)
-
     logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
+
+    # Cloud Run Job 環境では /app 配下が書き込み不可の可能性があるため、
+    # ファイルハンドラ初期化失敗時は標準出力ログのみで継続する。
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        file_handler.setLevel(LOG_LEVEL)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except Exception as exc:
+        logger.warning("file logger disabled: %s", str(exc))
+
     logger.propagate = False
     return logger
 
