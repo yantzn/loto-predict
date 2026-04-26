@@ -154,13 +154,13 @@ jobs:
             --source=gs://${SOURCE_BUCKET_NAME}/${FETCH_OBJECT} \
             --gen2
 
-          gcloud functions deploy import-loto-results-to-bq \
+          gcloud functions deploy import-loto-results-to-bq-v2 \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
             --source=gs://${SOURCE_BUCKET_NAME}/${IMPORT_OBJECT} \
             --gen2
 
-          gcloud functions deploy generate-prediction-and-notify \
+          gcloud functions deploy generate-prediction-and-notify-v2 \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
             --source=gs://${SOURCE_BUCKET_NAME}/${NOTIFY_OBJECT} \
