@@ -203,8 +203,4 @@ def get_settings() -> AppSettings:
     )
     _validate(settings)
 
-    # local は dry-run を許容し、本番系環境では LINE 設定を必須にする。
-    if settings.is_production:
-        require_line_settings(settings)
-
     return settings
