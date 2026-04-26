@@ -21,6 +21,7 @@
 - Cloud Functions Runtime 用 Service Account
 - Workflow runner 用 Service Account
 - Cloud Scheduler invoker 用 Service Account
+- Cloud Run Jobs runtime 用 Service Account
 
 ## 認証基盤
 

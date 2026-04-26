@@ -32,3 +32,8 @@ output "scheduler_invoker_service_account_email" {
   description = "Cloud Scheduler invoker SA email"
   value       = google_service_account.scheduler_invoker.email
 }
+
+output "cloud_run_jobs_service_account_email" {
+  description = "Cloud Run Jobs runtime SA email"
+  value       = google_service_account.cloud_run_jobs.email
+}
