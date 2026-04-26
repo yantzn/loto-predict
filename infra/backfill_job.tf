@@ -18,9 +18,11 @@ resource "google_cloud_run_v2_job" "backfill_loto_history" {
         image = var.backfill_job_image
 
         # 必須引数をTerraformで明示的に渡して、実ジョブとしてそのまま実行可能にする。
+        # Buildpack イメージでは launcher 経由で実行して Python ランタイム環境を有効化する。
         # 手動実行時は gcloud run jobs execute --args で上書きしやすい構成。
-        command = ["python"]
+        command = ["/cnb/lifecycle/launcher"]
         args = [
+          "python",
           "main.py",
           "--lottery-type", var.backfill_default_lottery_type,
           "--start-date", var.backfill_default_start_date,

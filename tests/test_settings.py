@@ -34,11 +34,14 @@ def test_get_settings_production_flag(monkeypatch) -> None:
     assert settings.is_production is True
 
 
-def test_get_settings_raises_when_line_missing_in_production(monkeypatch) -> None:
+def test_get_settings_allows_missing_line_in_production(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "gcp")
     monkeypatch.delenv("LINE_USER_ID", raising=False)
     monkeypatch.delenv("LINE_CHANNEL_ACCESS_TOKEN", raising=False)
     get_settings.cache_clear()
 
-    with pytest.raises(ValueError, match="LINE_CHANNEL_ACCESS_TOKEN"):
-        get_settings()
+    settings = get_settings()
+
+    assert settings.app_env == "gcp"
+    assert settings.line.channel_access_token is None
+    assert settings.line.user_id is None

@@ -135,5 +135,5 @@ jobs:
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
             --source=jobs/backfill_loto_history \
-            --command=python \
-            --args="main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"
+            --command=/cnb/lifecycle/launcher \
+            --args="python,main.py,--lottery-type,${BACKFILL_DEFAULT_LOTTERY_TYPE},--start-date,${BACKFILL_DEFAULT_START_DATE},--end-date,${BACKFILL_DEFAULT_END_DATE},--output-path,${OUTPUT_PATH}"
