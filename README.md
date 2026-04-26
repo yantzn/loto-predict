@@ -122,14 +122,14 @@ python jobs/backfill_loto_history/main.py --lottery-type loto6 --start-date 2026
 
 Cloud Run Job:
 
-- `infra/backfill_job.tf` は backfill 専用コンテナ image を前提に実行します。
+- `infra/backfill_job.tf` は backfill ソースからビルドされたコンテナ image を実行します。
 - 必須引数 `--lottery-type --start-date --end-date --output-path` は Terraform 側で `command/args` として設定します。
 - 手動実行時は `gcloud run jobs execute ... --args` で上書き可能です。
 
 例:
 
 ```powershell
-gcloud run jobs execute backfill-loto-history --region=asia-northeast1 --args="jobs/backfill_loto_history/main.py,--lottery-type,loto7,--start-date,2026-01-01,--end-date,2026-04-01,--output-path,gs://<raw-bucket>/backfill/loto7_20260101_20260401.csv"
+gcloud run jobs execute backfill-loto-history --region=asia-northeast1 --args="main.py,--lottery-type,loto7,--start-date,2026-01-01,--end-date,2026-04-01,--output-path,gs://<raw-bucket>/backfill/loto7_20260101_20260401.csv"
 ```
 
 ### 動作確認コマンド

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jobs/backfill_loto_history/ へ requirements-base.txt と src をコピーする
+# jobs/backfill_loto_history/ へ requirements.txt と src をコピーする
 # - Cloud Run Job の --source デプロイで必要な実行ファイルを揃えるため
 set -euo pipefail
 
@@ -21,9 +21,10 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   exit 1
 fi
 
-cp "${BASE_REQUIREMENTS}" "${JOB_DIR}/requirements-base.txt"
+cp "${BASE_REQUIREMENTS}" "${JOB_DIR}/requirements.txt"
+rm -f "${JOB_DIR}/requirements-base.txt"
 rm -rf "${JOB_DIR}/src"
 cp -R "${SRC_DIR}" "${JOB_DIR}/src"
 
-echo "Copied ${BASE_REQUIREMENTS} to ${JOB_DIR}/requirements-base.txt"
+echo "Copied ${BASE_REQUIREMENTS} to ${JOB_DIR}/requirements.txt"
 echo "Copied ${SRC_DIR} to ${JOB_DIR}/src"
