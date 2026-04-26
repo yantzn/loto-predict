@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import logging
 import os
 import sys
 import uuid
-import argparse
 from pathlib import Path
+from typing import Any
 
 from google.cloud import bigquery
 
 CURRENT_DIR = Path(__file__).resolve().parent
-# Cloud Functions 配布時(/workspace)とローカル実行時の両方で src ルートを解決する。
-PROJECT_ROOT = next((p for p in (CURRENT_DIR, *CURRENT_DIR.parents) if (p / "src").is_dir()), CURRENT_DIR)
+PROJECT_ROOT = next(
+    (p for p in (CURRENT_DIR, *CURRENT_DIR.parents) if (p / "src").is_dir()),
+    CURRENT_DIR,
+)
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
@@ -26,6 +30,7 @@ try:
     from common.execution_log import write_execution_log
 except ImportError:
     from functions.common.execution_log import write_execution_log
+
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -41,9 +46,9 @@ def _log_execution(
     error_type: str | None = None,
     error_detail: str | None = None,
 ) -> None:
-    # local では監査用 env が未設定でも本体処理の確認を優先する。
     project_id = os.getenv("GCP_PROJECT_ID")
     dataset_id = os.getenv("BQ_DATASET") or os.getenv("BIGQUERY_DATASET")
+
     if not project_id or not dataset_id:
         logger.warning(
             "execution log write skipped due to missing env. execution_id=%s stage=%s status=%s",
@@ -74,30 +79,72 @@ def _log_execution(
         )
 
 
-def _decode_pubsub_message(cloud_event) -> dict[str, object]:
-    # CloudEvent/Raw辞書どちらで渡されても同じ形式に正規化して扱う。
-    envelope = getattr(cloud_event, "data", cloud_event)
-    message = envelope.get("message", envelope)
-    data = message.get("data", "")
-    if not data:
+def _json_loads_text(text: str) -> dict[str, object]:
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("Pub/Sub message JSON must be an object")
+    return parsed
+
+
+def _decode_base64_json(raw_data: object) -> dict[str, object]:
+    if raw_data is None:
         raise ValueError("Pub/Sub message data is empty")
-    decoded = base64.b64decode(data).decode("utf-8")
-    return json.loads(decoded)
+
+    if isinstance(raw_data, bytes):
+        raw_data_text = raw_data.decode("utf-8")
+    else:
+        raw_data_text = str(raw_data)
+
+    decoded = base64.b64decode(raw_data_text).decode("utf-8")
+    return _json_loads_text(decoded)
 
 
-def _history_limit_for(settings, lottery_type: str) -> int:
+def _decode_pubsub_message(event: Any) -> dict[str, object]:
+    """
+    Pub/Sub Event Trigger の入力をpayload dictに正規化する。
+
+    対応形式:
+    - Background function: event["data"]
+    - Push/Envelope形式: event["message"]["data"]
+    - CloudEvent風: event.data
+    - ローカル検証用: payload dictそのもの
+    """
+    envelope = getattr(event, "data", event)
+
+    if isinstance(envelope, bytes):
+        return _json_loads_text(envelope.decode("utf-8"))
+
+    if not isinstance(envelope, dict):
+        raise ValueError(f"unsupported event type: {type(event).__name__}")
+
+    message = envelope.get("message")
+    if isinstance(message, dict):
+        return _decode_base64_json(message.get("data"))
+
+    raw_data = envelope.get("data")
+    if raw_data:
+        return _decode_base64_json(raw_data)
+
+    if "lottery_type" in envelope:
+        return dict(envelope)
+
+    raise ValueError("Pub/Sub message data is empty")
+
+
+def _history_limit_for(settings: Any, lottery_type: str) -> int:
     if hasattr(settings.lottery, "history_limit_for"):
         return int(settings.lottery.history_limit_for(lottery_type))
     return int(settings.lottery.stats_target_draws_for(lottery_type))
 
 
-def _build_usecase(settings, notify_enabled: bool):
+def _build_usecase(settings: Any, notify_enabled: bool) -> GenerateAndNotifyUseCase:
     if notify_enabled:
         require_line_settings(settings)
 
     bq_client = None if settings.is_local else bigquery.Client(project=settings.gcp.project_id or None)
     repository = create_loto_repository(bq_client=bq_client)
     line_client = LineClient(settings.line.channel_access_token) if notify_enabled else NoopLineClient()
+
     return GenerateAndNotifyUseCase(
         repository=repository,
         line_client=line_client,
@@ -109,50 +156,47 @@ def _build_usecase(settings, notify_enabled: bool):
 def _coerce_optional_int(value: object) -> int | None:
     if value is None:
         return None
+
     try:
         return int(str(value))
     except (TypeError, ValueError):
         return None
 
 
-def generate_prediction_and_notify(event, context=None):
-    # event デコードだけを Function 層に残し、予想生成ロジックは既存 usecase を再利用することで
-    # 本番と local runner の挙動差分を最小化する。
+def generate_prediction_and_notify(event: Any, context: Any = None) -> dict[str, object]:
     del context
+
     execution_id = str(uuid.uuid4())
     lottery_type: str | None = None
+
     try:
         settings = get_settings()
         message = _decode_pubsub_message(event)
+
         execution_id = str(message.get("execution_id") or uuid.uuid4())
         lottery_type = str(message.get("lottery_type") or "").strip().lower()
+
         if lottery_type not in {"loto6", "loto7"}:
             raise ValueError("lottery_type must be loto6 or loto7")
 
         latest_draw_no = _coerce_optional_int(message.get("draw_no"))
         latest_draw_date = str(message.get("draw_date") or "").strip() or None
 
-        # local 検証でも LINE 実送信を選べるように、明示フラグがある場合はそれを優先する。
         notify_enabled = bool(message.get("notify", not settings.is_local))
         usecase = _build_usecase(settings, notify_enabled)
 
-        # history_limit: 統計算出に使う履歴件数。
-        # prediction_count: 生成する予想口数。
         history_limit = _history_limit_for(settings, lottery_type)
         prediction_count = settings.lottery.prediction_count
+
         logger.info(
-            "generate_prediction_and_notify start. execution_id=%s lottery_type=%s history_limit=%s prediction_count=%s",
+            "generate_prediction_and_notify start. execution_id=%s lottery_type=%s "
+            "history_limit=%s prediction_count=%s",
             execution_id,
             lottery_type,
             history_limit,
             prediction_count,
         )
 
-        # entry point 層は入力解析・依存生成・usecase呼び出しに専念し、
-        # BigQuery schema 変換や保存形式の詳細は repository 層へ委譲する。
-        # 監査線の役割分担:
-        # - prediction_runs は予想結果監査
-        # - execution_logs は実行監査(SUCCESS/FAILED) を担う
         result = usecase.execute(
             lottery_type=lottery_type,
             history_limit=history_limit,
@@ -170,13 +214,17 @@ def generate_prediction_and_notify(event, context=None):
             stage="generate_notify",
             status="SUCCESS",
             message=(
-                f"draw_no={result.get('latest_draw_no')} draw_date={result.get('latest_draw_date')} history_count={result['history_count']} prediction_count={result['prediction_count']} "
+                f"draw_no={result.get('latest_draw_no')} "
+                f"draw_date={result.get('latest_draw_date')} "
+                f"history_count={result['history_count']} "
+                f"prediction_count={result['prediction_count']} "
                 f"message_sent={notify_enabled}"
             ),
         )
 
         logger.info(
-            "generate_prediction_and_notify completed. execution_id=%s lottery_type=%s draw_no=%s draw_date=%s history_count=%s prediction_count=%s",
+            "generate_prediction_and_notify completed. execution_id=%s lottery_type=%s "
+            "draw_no=%s draw_date=%s history_count=%s prediction_count=%s",
             execution_id,
             lottery_type,
             result.get("latest_draw_no"),
@@ -184,9 +232,10 @@ def generate_prediction_and_notify(event, context=None):
             result["history_count"],
             result["prediction_count"],
         )
+
         return result
+
     except Exception as exc:
-        # FAILED時は prediction_runs を増やさず、execution_logs 側へ監査を寄せる。
         _log_execution(
             execution_id=execution_id,
             lottery_type=lottery_type,
@@ -197,7 +246,8 @@ def generate_prediction_and_notify(event, context=None):
             error_detail=str(exc),
         )
         logger.exception(
-            "generate_prediction_and_notify failed. execution_id=%s lottery_type=%s error_message=%s",
+            "generate_prediction_and_notify failed. execution_id=%s lottery_type=%s "
+            "error_message=%s",
             execution_id,
             lottery_type,
             str(exc),
@@ -205,8 +255,8 @@ def generate_prediction_and_notify(event, context=None):
         raise
 
 
-def entry_point(cloud_event):
-    return generate_prediction_and_notify(cloud_event, None)
+def entry_point(event: Any, context: Any = None) -> dict[str, object]:
+    return generate_prediction_and_notify(event, context)
 
 
 if __name__ == "__main__":
@@ -221,9 +271,17 @@ if __name__ == "__main__":
         "lottery_type": args.lottery_type,
         "notify": args.notify,
     }
-    cloud_event = {
-        "message": {
-            "data": base64.b64encode(json.dumps(sample, ensure_ascii=False).encode("utf-8")).decode("utf-8")
-        }
+
+    event = {
+        "data": base64.b64encode(
+            json.dumps(sample, ensure_ascii=False).encode("utf-8")
+        ).decode("utf-8")
     }
-    print(json.dumps(generate_prediction_and_notify(cloud_event, None), ensure_ascii=False, indent=2))
+
+    print(
+        json.dumps(
+            generate_prediction_and_notify(event, None),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )

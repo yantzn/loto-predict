@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import logging
 import os
 import sys
-import argparse
 from pathlib import Path
+from typing import Any
 
 from google.cloud import bigquery, pubsub_v1
 
 CURRENT_DIR = Path(__file__).resolve().parent
-# Cloud Functions 配布時(/workspace)とローカル実行時の両方で src ルートを解決する。
-PROJECT_ROOT = next((p for p in (CURRENT_DIR, *CURRENT_DIR.parents) if (p / "src").is_dir()), CURRENT_DIR)
+PROJECT_ROOT = next(
+    (p for p in (CURRENT_DIR, *CURRENT_DIR.parents) if (p / "src").is_dir()),
+    CURRENT_DIR,
+)
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
@@ -20,7 +24,10 @@ from src.config.settings import get_settings
 from src.infrastructure.gcs.storage_factory import create_storage_client
 from src.infrastructure.repositories.bigquery_loto_repository import BigQueryLotoRepository
 from src.infrastructure.repositories.local_loto_repository import LocalLotoRepository
-from src.usecases.import_loto_results_to_bq import ImportLotoResultsInput, ImportLotoResultsToBQUseCase
+from src.usecases.import_loto_results_to_bq import (
+    ImportLotoResultsInput,
+    ImportLotoResultsToBQUseCase,
+)
 
 try:
     from common.execution_log import write_execution_log
@@ -28,9 +35,11 @@ except ImportError:
     try:
         from functions.common.execution_log import write_execution_log
     except ImportError:
-        def write_execution_log(**kwargs):
+
+        def write_execution_log(**kwargs: Any) -> None:
             del kwargs
             return None
+
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -46,10 +55,9 @@ def _log_execution(
     error_type: str | None = None,
     error_detail: str | None = None,
 ) -> None:
-    # local では監査用 env が未設定でも処理検証を継続したいため、
-    # execution_logs 書き込み失敗はここで warning に落として本体結果を優先する。
     project_id = os.getenv("GCP_PROJECT_ID")
     dataset_id = os.getenv("BQ_DATASET") or os.getenv("BIGQUERY_DATASET")
+
     if not project_id or not dataset_id:
         logger.warning(
             "execution log write skipped due to missing env. execution_id=%s stage=%s status=%s",
@@ -86,7 +94,10 @@ class _PubSubPublisher:
         self._topic_path = self._publisher.topic_path(project_id, topic_name)
 
     def publish_json(self, payload: dict[str, object]) -> str:
-        future = self._publisher.publish(self._topic_path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        future = self._publisher.publish(
+            self._topic_path,
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        )
         return str(future.result())
 
 
@@ -96,40 +107,80 @@ class _NoopPublisher:
         return "local-skip"
 
 
-def _decode_event_data(event) -> dict[str, object]:
-    if isinstance(event, dict):
-        raw_data = event.get("data")
-        if raw_data:
-            decoded = base64.b64decode(raw_data).decode("utf-8")
-            return json.loads(decoded)
+def _json_loads_text(text: str) -> dict[str, object]:
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("Pub/Sub message JSON must be an object")
+    return parsed
 
-    envelope = getattr(event, "data", event)
-    if isinstance(envelope, dict) and envelope.get("data"):
-        decoded = base64.b64decode(envelope["data"]).decode("utf-8")
-        return json.loads(decoded)
 
-    message = envelope.get("message", envelope)
-    raw_data = message.get("data")
-    if not raw_data:
+def _decode_base64_json(raw_data: object) -> dict[str, object]:
+    if raw_data is None:
         raise ValueError("Pub/Sub message data is empty")
 
-    decoded = base64.b64decode(raw_data).decode("utf-8")
-    return json.loads(decoded)
+    if isinstance(raw_data, bytes):
+        raw_data_text = raw_data.decode("utf-8")
+    else:
+        raw_data_text = str(raw_data)
+
+    decoded = base64.b64decode(raw_data_text).decode("utf-8")
+    return _json_loads_text(decoded)
 
 
-def _build_usecase(settings):
-    publisher = _NoopPublisher()
+def _decode_event_data(event: Any) -> dict[str, object]:
+    """
+    Pub/Sub Event Trigger の入力をpayload dictに正規化する。
+
+    対応形式:
+    - Background function: event["data"]
+    - Push/Envelope形式: event["message"]["data"]
+    - CloudEvent風: event.data
+    - ローカル検証用: payload dictそのもの
+    """
+    envelope = getattr(event, "data", event)
+
+    if isinstance(envelope, bytes):
+        return _json_loads_text(envelope.decode("utf-8"))
+
+    if not isinstance(envelope, dict):
+        raise ValueError(f"unsupported event type: {type(event).__name__}")
+
+    message = envelope.get("message")
+    if isinstance(message, dict):
+        return _decode_base64_json(message.get("data"))
+
+    raw_data = envelope.get("data")
+    if raw_data:
+        return _decode_base64_json(raw_data)
+
+    # ローカル検証で payload dict を直接渡した場合
+    if "lottery_type" in envelope or "gcs_uri" in envelope or "gcs_object" in envelope:
+        return dict(envelope)
+
+    raise ValueError("Pub/Sub message data is empty")
+
+
+def _build_usecase(settings: Any) -> ImportLotoResultsToBQUseCase:
+    publisher: _PubSubPublisher | _NoopPublisher = _NoopPublisher()
+
     if not settings.is_local:
         if not settings.gcp.project_id:
             raise ValueError("GCP_PROJECT_ID is required in non-local mode")
-        publisher = _PubSubPublisher(settings.gcp.project_id, settings.gcp.notify_topic_name)
+        publisher = _PubSubPublisher(
+            settings.gcp.project_id,
+            settings.gcp.notify_topic_name,
+        )
 
     if settings.is_local:
         repository = LocalLotoRepository(
             base_path=getattr(settings, "local_storage_path", "./local_storage"),
             table_loto6=getattr(settings.gcp, "table_loto6_history", "loto6_history"),
             table_loto7=getattr(settings.gcp, "table_loto7_history", "loto7_history"),
-            prediction_runs_table=getattr(settings.gcp, "table_prediction_runs", "prediction_runs"),
+            prediction_runs_table=getattr(
+                settings.gcp,
+                "table_prediction_runs",
+                "prediction_runs",
+            ),
         )
     else:
         bq_client = bigquery.Client(project=settings.gcp.project_id or None)
@@ -139,7 +190,11 @@ def _build_usecase(settings):
             dataset=settings.gcp.bigquery_dataset,
             table_loto6=getattr(settings.gcp, "table_loto6_history", "loto6_history"),
             table_loto7=getattr(settings.gcp, "table_loto7_history", "loto7_history"),
-            prediction_runs_table=getattr(settings.gcp, "table_prediction_runs", "prediction_runs"),
+            prediction_runs_table=getattr(
+                settings.gcp,
+                "table_prediction_runs",
+                "prediction_runs",
+            ),
         )
 
     return ImportLotoResultsToBQUseCase(
@@ -150,9 +205,9 @@ def _build_usecase(settings):
     )
 
 
-def import_loto_results_to_bq(event, context=None):
-    # Pub/Sub デコードは Function 層に留め、usecase をローカル実行と共通化するため。
+def import_loto_results_to_bq(event: Any, context: Any = None) -> dict[str, object]:
     del context
+
     execution_id = ""
     lottery_type: str | None = None
     gcs_uri: str | None = None
@@ -160,15 +215,29 @@ def import_loto_results_to_bq(event, context=None):
     try:
         settings = get_settings()
         payload = _decode_event_data(event)
+
         execution_id = str(payload.get("execution_id") or "")
         lottery_type = str(payload.get("lottery_type") or "").strip().lower()
-
         gcs_uri = str(payload.get("gcs_uri") or "").strip()
+
         if not gcs_uri:
             gcs_bucket = str(payload.get("gcs_bucket") or "").strip()
-            gcs_object = str(payload.get("gcs_object") or "").strip()
+            gcs_object = str(
+                payload.get("gcs_object")
+                or payload.get("gcs_path")
+                or payload.get("object")
+                or payload.get("name")
+                or ""
+            ).strip()
+
             if gcs_bucket and gcs_object:
                 gcs_uri = f"gs://{gcs_bucket}/{gcs_object}"
+            elif gcs_object:
+                bucket = getattr(settings.gcp, "raw_bucket", None) or os.getenv("GCS_BUCKET_RAW")
+                if not bucket:
+                    raise ValueError("GCS_BUCKET_RAW is required when only gcs_object is specified")
+                gcs_uri = f"gs://{bucket}/{gcs_object}"
+
         if not gcs_uri:
             raise ValueError("gcs_uri is required")
 
@@ -188,13 +257,15 @@ def import_loto_results_to_bq(event, context=None):
             stage="import",
             status="SUCCESS",
             message=(
-                f"draw_no={result.draw_no} total_rows={result.total_rows} inserted_rows={result.inserted_rows} "
-                f"skipped_rows={result.skipped_rows} gcs_uri={result.gcs_uri}"
+                f"draw_no={result.draw_no} total_rows={result.total_rows} "
+                f"inserted_rows={result.inserted_rows} skipped_rows={result.skipped_rows} "
+                f"gcs_uri={result.gcs_uri}"
             ),
         )
 
         logger.info(
-            "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s draw_no=%s total=%s inserted=%s skipped=%s",
+            "import_loto_results_to_bq completed. execution_id=%s lottery_type=%s "
+            "draw_no=%s total=%s inserted=%s skipped=%s",
             result.execution_id,
             result.lottery_type,
             result.draw_no,
@@ -202,6 +273,7 @@ def import_loto_results_to_bq(event, context=None):
             result.inserted_rows,
             result.skipped_rows,
         )
+
         return {
             "status": "ok",
             "execution_id": result.execution_id,
@@ -213,6 +285,7 @@ def import_loto_results_to_bq(event, context=None):
             "draw_no": result.draw_no,
             "draw_date": result.draw_date,
         }
+
     except Exception as exc:
         _log_execution(
             execution_id=execution_id or "unknown",
@@ -224,7 +297,8 @@ def import_loto_results_to_bq(event, context=None):
             error_detail=str(exc),
         )
         logger.exception(
-            "import_loto_results_to_bq failed. execution_id=%s lottery_type=%s gcs_uri=%s error_message=%s",
+            "import_loto_results_to_bq failed. execution_id=%s lottery_type=%s "
+            "gcs_uri=%s error_message=%s",
             execution_id,
             lottery_type,
             gcs_uri,
@@ -233,12 +307,8 @@ def import_loto_results_to_bq(event, context=None):
         raise
 
 
-def entry_point(cloud_event):
-    payload = _decode_event_data(cloud_event)
-    event = {
-        "data": base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("utf-8")
-    }
-    return import_loto_results_to_bq(event, None)
+def entry_point(event: Any, context: Any = None) -> dict[str, object]:
+    return import_loto_results_to_bq(event, context)
 
 
 if __name__ == "__main__":
@@ -254,7 +324,17 @@ if __name__ == "__main__":
         "lottery_type": args.lottery_type,
         "gcs_uri": args.gcs_uri or default_gcs_uri,
     }
+
     event = {
-        "data": base64.b64encode(json.dumps(sample, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+        "data": base64.b64encode(
+            json.dumps(sample, ensure_ascii=False).encode("utf-8")
+        ).decode("utf-8")
     }
-    print(json.dumps(import_loto_results_to_bq(event, None), ensure_ascii=False, indent=2))
+
+    print(
+        json.dumps(
+            import_loto_results_to_bq(event, None),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
