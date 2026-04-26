@@ -55,7 +55,7 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
 }
 
 resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
-  name     = "import-loto-results-to-bq"
+  name     = "import-loto-results-to-bq-v2"
   location = var.region
   project  = var.project_id
 
@@ -125,7 +125,7 @@ resource "google_cloudfunctions2_function" "import_loto_results_to_bq" {
 }
 
 resource "google_cloudfunctions2_function" "generate_prediction_and_notify" {
-  name     = "generate-prediction-and-notify"
+  name     = "generate-prediction-and-notify-v2"
   location = var.region
   project  = var.project_id
 
