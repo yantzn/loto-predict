@@ -214,7 +214,15 @@ def import_loto_results_to_bq(event: Any, context: Any = None) -> dict[str, obje
 
     try:
         settings = get_settings()
-        payload = _decode_event_data(event)
+        try:
+            payload = _decode_event_data(event)
+        except json.JSONDecodeError as exc:
+            logger.error("invalid pubsub message json. skip and ack. error=%s", str(exc))
+            return {
+                "status": "skipped",
+                "reason": "invalid_json",
+                "error": str(exc),
+            }
 
         execution_id = str(payload.get("execution_id") or "")
         lottery_type = str(payload.get("lottery_type") or "").strip().lower()
