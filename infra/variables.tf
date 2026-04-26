@@ -75,6 +75,11 @@ variable "scheduler_invoker_service_account_email" {
 variable "cloud_run_jobs_service_account_email" {
   description = "Service account email used by Cloud Run Jobs"
   type        = string
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", trimspace(var.cloud_run_jobs_service_account_email)))
+    error_message = "cloud_run_jobs_service_account_email must be a valid non-empty service account email address."
+  }
 }
 
 variable "history_limit_loto6" {

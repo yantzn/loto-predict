@@ -28,6 +28,7 @@ locals {
   functions_runtime_account_id = "loto-fn-runtime-${local.suffix}"
   workflow_runner_account_id   = "loto-workflow-runner-${local.suffix}"
   scheduler_invoker_account_id = "loto-scheduler-invoker-${local.suffix}"
+  cloud_run_jobs_account_id    = "loto-cloudrun-jobs-${local.suffix}"
 }
 
 #
@@ -119,6 +120,13 @@ resource "google_service_account" "workflow_runner" {
 resource "google_service_account" "scheduler_invoker" {
   account_id   = local.scheduler_invoker_account_id
   display_name = "Cloud Scheduler invoker for loto-predict-line"
+
+  depends_on = [google_project_service.services]
+}
+
+resource "google_service_account" "cloud_run_jobs" {
+  account_id   = local.cloud_run_jobs_account_id
+  display_name = "Cloud Run Jobs runtime for loto-predict-line"
 
   depends_on = [google_project_service.services]
 }

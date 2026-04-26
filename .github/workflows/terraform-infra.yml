@@ -106,6 +106,9 @@ jobs:
           CLOUD_RUN_JOBS_SERVICE_ACCOUNT_EMAIL: ${{ secrets.CLOUD_RUN_JOBS_SERVICE_ACCOUNT_EMAIL }}
         run: |
           set -euo pipefail
+          test -n "${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}"
+          test -n "${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}"
+          test -n "${CLOUD_RUN_JOBS_SERVICE_ACCOUNT_EMAIL}"
           terraform plan \
             -lock-timeout=5m \
             -var="project_id=${GCP_PROJECT_ID}" \
