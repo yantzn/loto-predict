@@ -8,12 +8,6 @@ resource "google_storage_bucket_iam_member" "functions_runtime_raw_bucket_object
   member = "serviceAccount:${var.functions_runtime_service_account_email}"
 }
 
-resource "google_storage_bucket_iam_member" "cloud_run_jobs_raw_bucket_object_admin" {
-  bucket = google_storage_bucket.raw_bucket.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${var.cloud_run_jobs_service_account_email}"
-}
-
 resource "google_bigquery_dataset_iam_member" "functions_runtime_bigquery_data_editor" {
   dataset_id = google_bigquery_dataset.dataset.dataset_id
   role       = "roles/bigquery.dataEditor"
@@ -58,32 +52,10 @@ resource "google_service_account_iam_member" "scheduler_service_agent_token_crea
   member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
-resource "google_service_account_iam_member" "pubsub_service_agent_token_creator" {
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.scheduler_invoker_service_account_email}"
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
-}
-
 resource "google_cloud_run_service_iam_member" "fetch_scheduler_invoker" {
   project  = var.project_id
   location = var.region
   service  = google_cloudfunctions2_function.fetch_loto_results.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${var.scheduler_invoker_service_account_email}"
-}
-
-resource "google_cloud_run_service_iam_member" "import_pubsub_invoker" {
-  project  = var.project_id
-  location = var.region
-  service  = google_cloudfunctions2_function.import_loto_results_to_bq.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${var.scheduler_invoker_service_account_email}"
-}
-
-resource "google_cloud_run_service_iam_member" "notify_pubsub_invoker" {
-  project  = var.project_id
-  location = var.region
-  service  = google_cloudfunctions2_function.generate_prediction_and_notify.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${var.scheduler_invoker_service_account_email}"
 }
