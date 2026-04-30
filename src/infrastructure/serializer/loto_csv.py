@@ -28,9 +28,16 @@ def _stringify_date(value: Any) -> str:
     if value is None:
         return NULL_MARKER
     if isinstance(value, datetime):
-        return value.date().isoformat()
+        return value.strftime("%Y%m%d")
     if isinstance(value, date):
-        return value.isoformat()
+        return value.strftime("%Y%m%d")
+    # 文字列 YYYY-MM-DD を YYYYMMDD に変換
+    if isinstance(value, str):
+        if len(value) == 10 and value[4] == "-" and value[7] == "-":
+            # YYYY-MM-DD フォーマットを YYYYMMDD に変換
+            return value.replace("-", "")
+        # その他の文字列はそのまま返す
+        return value
     return str(value)
 
 
