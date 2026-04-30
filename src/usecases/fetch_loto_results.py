@@ -52,6 +52,7 @@ class FetchLotoResultsUseCase:
             payload=csv_text.encode("utf-8"),
             content_type="text/csv; charset=utf-8",
         )
+        displayed_output_uri = self._build_display_output_uri(bucket_name, lottery_type, output_uri)
 
         if command.publish_import_message and self.publisher is not None:
             payload = {
@@ -67,7 +68,7 @@ class FetchLotoResultsUseCase:
             execution_id=execution_id,
             lottery_type=lottery_type,
             result_count=1,
-            output_uri=output_uri,
+            output_uri=displayed_output_uri,
             draw_no=latest.draw_no,
             draw_date=latest.draw_date,
         )
@@ -98,6 +99,11 @@ class FetchLotoResultsUseCase:
             # 同じ usecase 経路を最後まで通せるようにする。
             bucket_name = "local-raw"
         return f"gs://{bucket_name}/{lottery_type}/latest/latest.csv"
+
+    def _build_display_output_uri(self, bucket_name: str, lottery_type: str, uploaded_uri: str) -> str:
+        if self.settings.is_local:
+            return uploaded_uri
+        return f"{bucket_name}/{lottery_type}/latest"
 
     def _parse_gcs_uri(self, uri: str) -> tuple[str, str]:
         if not str(uri).startswith("gs://"):
