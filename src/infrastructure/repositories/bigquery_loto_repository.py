@@ -39,6 +39,17 @@ class BigQueryLotoRepository:
     def import_rows(self, lottery_type: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         table_id = self._table_id(lottery_type)
         # import 関数側と同じ BigQuery API を使い、実装差分を減らす。
+
+        # DEBUG: Log draw_date values and types for first 3 rows
+        for i, row in enumerate(rows[:3]):
+            draw_date = row.get("draw_date")
+            logger.info(
+                "DEBUG import_rows: row[%d] draw_date=%r (type=%s)",
+                i,
+                draw_date,
+                type(draw_date).__name__,
+            )
+
         errors = self.bq_client.insert_rows_json(table_id, rows)
         if errors:
             raise RuntimeError(f"BigQuery insert failed: table_id={table_id} errors={errors}")

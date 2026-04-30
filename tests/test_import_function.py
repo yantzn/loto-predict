@@ -108,3 +108,46 @@ def test_import_entry_point_converts_csv_to_insert_rows(monkeypatch) -> None:
     assert result_payload["draw_no"] == 2094
     assert fake_publisher.published_payloads[0]["execution_id"] == "exec-1"
     assert fake_publisher.published_payloads[0]["draw_no"] == 2094
+
+
+def test_import_entry_point_normalizes_yyyymmdd_draw_date(monkeypatch) -> None:
+    csv_text = (
+        "lottery_type,draw_no,draw_date,n1,n2,n3,n4,n5,n6,n7,b1,b2,source_url\n"
+        "loto6,2094,20260416,3,4,7,11,24,30,\\N,16,\\N,https://example.com/loto6\n"
+    )
+
+    fake_bq_client = _FakeBigQueryClient()
+    fake_publisher = _FakePublisher()
+    fake_settings = SimpleNamespace(
+        is_local=False,
+        gcp=SimpleNamespace(
+            project_id="test-project",
+            bigquery_dataset="loto_predict",
+            notify_topic_name="notify-loto-prediction",
+        ),
+    )
+
+    monkeypatch.setattr(import_main, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(import_main, "create_storage_client", lambda settings: _FakeStorageClient(csv_text))
+    monkeypatch.setattr(import_main.bigquery, "Client", lambda project=None: fake_bq_client)
+    monkeypatch.setattr(import_main.pubsub_v1, "PublisherClient", lambda: fake_publisher)
+
+    payload = {
+        "message": {
+            "data": base64.b64encode(
+                json.dumps(
+                    {
+                        "execution_id": "exec-2",
+                        "lottery_type": "loto6",
+                        "gcs_bucket": "bucket",
+                        "gcs_object": "object.csv",
+                    }
+                ).encode("utf-8")
+            ).decode("utf-8")
+        }
+    }
+
+    result_payload = import_main.entry_point(SimpleNamespace(data=payload))
+
+    assert result_payload["status"] == "ok"
+    assert fake_bq_client.inserted_rows[0]["draw_date"] == "2026-04-16"

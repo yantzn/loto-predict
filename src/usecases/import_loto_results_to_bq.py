@@ -3,9 +3,13 @@ from __future__ import annotations
 from uuid import uuid4
 from dataclasses import dataclass
 from io import StringIO
+from datetime import datetime, date, timedelta
 from typing import Any
+import logging
 
 from src.infrastructure.serializer.loto_csv import parse_csv_to_rows
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,17 @@ class ImportLotoResultsToBQUseCase:
         if not rows:
             raise ValueError("No rows found in CSV")
 
+        # DEBUG: Log CSV rows and draw_date values
+        logger.info("DEBUG execute: CSV parsed %d rows", len(rows))
+        for i, row in enumerate(rows[:3]):
+            logger.info(
+                "DEBUG execute: rows[%d] draw_date=%r (type=%s) full_row=%s",
+                i,
+                row.get("draw_date"),
+                type(row.get("draw_date")).__name__,
+                row,
+            )
+
         filtered_rows = [row for row in rows if str(row.get("lottery_type") or "").strip().lower() == lottery_type]
         if not filtered_rows:
             raise ValueError(f"No rows matched lottery_type={lottery_type}")
@@ -69,6 +84,8 @@ class ImportLotoResultsToBQUseCase:
 
         inserted_count = 0
         if insert_rows:
+            for row in insert_rows:
+                self._normalize_draw_date(row)
             result = self.repository.import_rows(lottery_type=lottery_type, rows=insert_rows)
             inserted_count = int(result.get("inserted_rows") or len(insert_rows))
 
@@ -140,3 +157,57 @@ class ImportLotoResultsToBQUseCase:
             raise ValueError(f"invalid gcs_uri: {uri}")
 
         return bucket_name, blob_name
+
+    def _normalize_draw_date(self, row: dict[str, Any]) -> None:
+        raw_draw_date = row.get("draw_date")
+        if raw_draw_date is None:
+            return
+
+        # 文字列チェック（ISO形式YYYY-MM-DDは変更不要）
+        if isinstance(raw_draw_date, str):
+            draw_date = raw_draw_date.strip()
+            if len(draw_date) == 10 and draw_date[4] == "-" and draw_date[7] == "-":
+                return  # 既にISO形式
+
+            # YYYYMMDD形式を変換
+            if len(draw_date) == 8 and draw_date.isdigit():
+                try:
+                    normalized = datetime.strptime(draw_date, "%Y%m%d").date().isoformat()
+                    row["draw_date"] = normalized
+                    logger.info("DEBUG _normalize_draw_date: converted YYYYMMDD %r to %r", draw_date, normalized)
+                except Exception as e:
+                    logger.warning("DEBUG _normalize_draw_date: failed to parse YYYYMMDD %r: %s", draw_date, e)
+                return
+
+            # 数字文字列を整数として解釈（Unix epoch days）
+            if draw_date.isdigit():
+                try:
+                    days_since_epoch = int(draw_date)
+                    epoch = date(1970, 1, 1)
+                    result_date = epoch + timedelta(days=days_since_epoch)
+                    row["draw_date"] = result_date.isoformat()
+                    logger.info("DEBUG _normalize_draw_date: converted epoch days %r to %r", draw_date, result_date.isoformat())
+                except Exception as e:
+                    logger.warning("DEBUG _normalize_draw_date: failed to parse epoch days %r: %s", draw_date, e)
+                return
+
+            # 解析不能な文字列はそのままにする（BigQuery側でエラー）
+            logger.warning(
+                "DEBUG _normalize_draw_date: unrecognized string format: %r",
+                raw_draw_date,
+            )
+            return
+
+        # 整数型の場合（Unix epoch days）
+        if isinstance(raw_draw_date, int):
+            try:
+                epoch = date(1970, 1, 1)
+                result_date = epoch + timedelta(days=raw_draw_date)
+                row["draw_date"] = result_date.isoformat()
+                logger.info("DEBUG _normalize_draw_date: converted int epoch days %r to %r", raw_draw_date, result_date.isoformat())
+            except Exception as e:
+                logger.warning("DEBUG _normalize_draw_date: failed to convert int epoch days %r: %s", raw_draw_date, e)
+            return
+
+        # その他の型は警告して無視
+        logger.warning("DEBUG _normalize_draw_date: unexpected type for draw_date: %r (type=%s)", raw_draw_date, type(raw_draw_date).__name__)
