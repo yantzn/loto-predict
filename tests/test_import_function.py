@@ -26,10 +26,20 @@ class _FakeQueryResult:
 class _FakeBigQueryClient:
     def __init__(self) -> None:
         self.inserted_rows: list[dict[str, object]] = []
+        self.loaded_rows: list[dict[str, object]] = []
 
     def query(self, sql: str, job_config=None):
         del sql, job_config
         return _FakeQueryResult()
+
+    class _FakeLoadJob:
+        def result(self):
+            return None
+
+    def load_table_from_json(self, rows: list[dict[str, object]], table_id: str, job_config=None):
+        del table_id, job_config
+        self.loaded_rows.extend(rows)
+        return self._FakeLoadJob()
 
     def insert_rows_json(self, table_id: str, rows: list[dict[str, object]]):
         del table_id
@@ -101,9 +111,9 @@ def test_import_entry_point_converts_csv_to_insert_rows(monkeypatch) -> None:
     result_payload = import_main.entry_point(SimpleNamespace(data=payload))
 
     assert result_payload["status"] == "ok"
-    assert fake_bq_client.inserted_rows[0]["draw_no"] == 2094
-    assert fake_bq_client.inserted_rows[0]["n6"] == 30
-    assert fake_bq_client.inserted_rows[0]["b1"] == 16
+    assert fake_bq_client.loaded_rows[0]["draw_no"] == 2094
+    assert fake_bq_client.loaded_rows[0]["n6"] == 30
+    assert fake_bq_client.loaded_rows[0]["b1"] == 16
     assert result_payload["execution_id"] == "exec-1"
     assert result_payload["draw_no"] == 2094
     assert fake_publisher.published_payloads[0]["execution_id"] == "exec-1"
@@ -150,4 +160,4 @@ def test_import_entry_point_normalizes_yyyymmdd_draw_date(monkeypatch) -> None:
     result_payload = import_main.entry_point(SimpleNamespace(data=payload))
 
     assert result_payload["status"] == "ok"
-    assert fake_bq_client.inserted_rows[0]["draw_date"] == "2026-04-16"
+    assert fake_bq_client.loaded_rows[0]["draw_date"] == "2026-04-16"
