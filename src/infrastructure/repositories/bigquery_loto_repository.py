@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from google.cloud import bigquery
@@ -40,8 +41,10 @@ class BigQueryLotoRepository:
         table_id = self._table_id(lottery_type)
         # import 関数側と同じ BigQuery API を使い、実装差分を減らす。
 
+        normalized_rows = [self._normalize_draw_date(row) for row in rows]
+
         # DEBUG: Log draw_date values and types for first 3 rows
-        for i, row in enumerate(rows[:3]):
+        for i, row in enumerate(normalized_rows[:3]):
             draw_date = row.get("draw_date")
             logger.info(
                 "DEBUG import_rows: row[%d] draw_date=%r (type=%s)",
@@ -50,15 +53,58 @@ class BigQueryLotoRepository:
                 type(draw_date).__name__,
             )
 
-        errors = self.bq_client.insert_rows_json(table_id, rows)
-        if errors:
-            raise RuntimeError(f"BigQuery insert failed: table_id={table_id} errors={errors}")
+        job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        )
+        load_job = self.bq_client.load_table_from_json(normalized_rows, table_id, job_config=job_config)
+        load_job.result()
         return {
-            "inserted_rows": len(rows),
-            "draw_no": rows[0].get("draw_no") if rows else None,
+            "inserted_rows": len(normalized_rows),
+            "draw_no": normalized_rows[0].get("draw_no") if normalized_rows else None,
             "skipped_as_duplicate": False,
             "table_id": table_id,
         }
+
+    def _normalize_draw_date(self, row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        raw = normalized.get("draw_date")
+
+        if raw is None:
+            return normalized
+
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                normalized["draw_date"] = None
+                return normalized
+
+            if len(text) == 10 and text[4] == "-" and text[7] == "-":
+                normalized["draw_date"] = text
+                return normalized
+
+            if len(text) == 8 and text.isdigit():
+                normalized["draw_date"] = datetime.strptime(text, "%Y%m%d").date().isoformat()
+                return normalized
+
+            if text.isdigit():
+                normalized["draw_date"] = (date(1970, 1, 1) + timedelta(days=int(text))).isoformat()
+                return normalized
+
+            return normalized
+
+        if isinstance(raw, int):
+            normalized["draw_date"] = (date(1970, 1, 1) + timedelta(days=raw)).isoformat()
+            return normalized
+
+        if isinstance(raw, datetime):
+            normalized["draw_date"] = raw.date().isoformat()
+            return normalized
+
+        if isinstance(raw, date):
+            normalized["draw_date"] = raw.isoformat()
+            return normalized
+
+        return normalized
 
     def fetch_existing_draw_nos(self, lottery_type: str, draw_nos: list[int]) -> set[int]:
         # backfill や再実行時の安全性を上げるため、履歴全件取得ではなく

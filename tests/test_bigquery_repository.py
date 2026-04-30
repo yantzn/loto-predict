@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from src.infrastructure.repositories.bigquery_loto_repository import BigQueryLotoRepository
 
 
@@ -13,10 +15,19 @@ class _FakeQueryJob:
 
 class _FakeBigQueryClient:
     def __init__(self) -> None:
+        self.load_calls: list[tuple[str, list[dict[str, object]]]] = []
         self.insert_calls: list[tuple[str, list[dict[str, object]]]] = []
         self.query_rows: list[dict[str, object]] = []
         self.last_query_text: str | None = None
         self.last_query_job_config = None
+
+    class _FakeLoadJob:
+        def result(self):
+            return None
+
+    def load_table_from_json(self, rows: list[dict[str, object]], table_id: str, job_config=None):
+        self.load_calls.append((table_id, rows))
+        return self._FakeLoadJob()
 
     def insert_rows_json(self, table_id: str, rows: list[dict[str, object]]):
         self.insert_calls.append((table_id, rows))
@@ -37,6 +48,27 @@ def test_fetch_existing_draw_nos_returns_matching_draw_nos() -> None:
 
     assert existing_draw_nos == {1001, 1003}
     assert "draw_no IN UNNEST" in client.last_query_text
+
+
+def test_import_rows_normalizes_draw_date_before_load() -> None:
+    client = _FakeBigQueryClient()
+    repository = _create_repository(client)
+
+    repository.import_rows(
+        "loto6",
+        [
+            {"draw_no": 1, "draw_date": 15712, "n1": 1},
+            {"draw_no": 2, "draw_date": "20260416", "n1": 2},
+            {"draw_no": 3, "draw_date": "2026-04-16", "n1": 3},
+        ],
+    )
+
+    assert len(client.load_calls) == 1
+    table_id, rows = client.load_calls[0]
+    assert table_id == "test-project.loto_predict.loto6_history"
+    assert rows[0]["draw_date"] == (date(1970, 1, 1) + timedelta(days=15712)).isoformat()
+    assert rows[1]["draw_date"] == "2026-04-16"
+    assert rows[2]["draw_date"] == "2026-04-16"
 
 
 def _create_repository(client: _FakeBigQueryClient) -> BigQueryLotoRepository:
