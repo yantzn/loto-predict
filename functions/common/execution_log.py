@@ -78,7 +78,8 @@ def write_execution_log(
         "status": status,
         "message": message,
         "error_detail": error_detail,
-        "created_at": now_local_iso(),
+        "executed_at": now_local_iso(),
+        "executed_date": now_local_iso().split("T")[0],
     }
 
     try:
