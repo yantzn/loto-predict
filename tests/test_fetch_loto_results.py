@@ -73,7 +73,7 @@ def test_fetch_loto_results_usecase_success() -> None:
     assert result.execution_id == "test-exec-123"
     assert result.lottery_type == "loto6"
     assert result.draw_no == 2094
-    assert result.output_uri == "test-bucket/loto6/latest"
+    assert result.output_uri == "gs://test-bucket/loto6/latest/latest.csv"
     mock_loto_client.fetch_latest_result.assert_called_once_with("loto6")
     mock_storage_client.upload_bytes.assert_called_once()
     mock_publisher.publish_json.assert_called_once()
@@ -214,5 +214,5 @@ def test_fetch_loto_results_loto7() -> None:
 
     assert result.lottery_type == "loto7"
     assert result.draw_no == 673
-    assert result.output_uri == "test-bucket/loto7/latest"
+    assert result.output_uri == "gs://test-bucket/loto7/latest/latest.csv"
     mock_loto_client.fetch_latest_result.assert_called_once_with("loto7")
