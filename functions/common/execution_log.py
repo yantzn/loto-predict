@@ -71,15 +71,22 @@ def write_execution_log(
     - その他は状況に応じて付与
     """
     effective_stage = stage or function_name
+    now_iso = now_local_iso()
     row: dict[str, Any] = {
         "execution_id": execution_id,
+        "function_name": function_name,
         "lottery_type": lottery_type,
         "stage": effective_stage,
         "status": status,
         "message": message,
+        "gcs_bucket": gcs_bucket,
+        "gcs_object": gcs_object,
+        "draw_no": draw_no,
+        "run_id": run_id,
+        "error_type": error_type,
         "error_detail": error_detail,
-        "executed_at": now_local_iso(),
-        "executed_date": now_local_iso().split("T")[0],
+        "executed_at": now_iso,
+        "executed_date": now_iso.split("T")[0],
     }
 
     try:
