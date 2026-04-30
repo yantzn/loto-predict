@@ -90,11 +90,10 @@ jobs:
       - name: Terraform fmt # フォーマットチェック
         run: terraform fmt -check -recursive
 
-      - name: Terraform init # 初期化
+      - name: Terraform init (for validate) # backend不要で初期化
         run: |
           set -euo pipefail
-          terraform init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}"
+          terraform init -backend=false
 
       - name: Terraform validate # 構文バリデーション
         run: terraform validate
@@ -109,6 +108,8 @@ jobs:
           test -n "${FUNCTIONS_RUNTIME_SERVICE_ACCOUNT_EMAIL}"
           test -n "${SCHEDULER_INVOKER_SERVICE_ACCOUNT_EMAIL}"
           test -n "${CLOUD_RUN_JOBS_SERVICE_ACCOUNT_EMAIL}"
+          terraform init -reconfigure \
+            -backend-config="bucket=${TFSTATE_BUCKET}"
           terraform plan \
             -lock-timeout=5m \
             -var="project_id=${GCP_PROJECT_ID}" \
