@@ -77,6 +77,8 @@ class GenerateAndNotifyUseCase:
                 if latest_draw_no is not None
                 else self._latest_draw_no(history_rows)
             )
+            # Predictions target the next draw after the latest known draw.
+            target_draw_no = (int(resolved_draw_no) + 1) if resolved_draw_no is not None else None
             resolved_draw_date = (
                 latest_draw_date
                 if latest_draw_date is not None
@@ -94,7 +96,7 @@ class GenerateAndNotifyUseCase:
 
             message = self._build_message(
                 lottery_type=normalized_lottery_type,
-                draw_no=resolved_draw_no,
+                draw_no=target_draw_no,
                 history_count=len(history_rows),
                 predictions=predictions,
                 strategy=strategy,
@@ -112,7 +114,7 @@ class GenerateAndNotifyUseCase:
                 "predictions": predictions,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "status": "SUCCESS" if notify_enabled else "DRY_RUN",
-                "latest_draw_no": resolved_draw_no,
+                "latest_draw_no": target_draw_no,
                 "draw_date": resolved_draw_date,
                 "strategy": strategy,
                 "seed": seed,
@@ -146,7 +148,7 @@ class GenerateAndNotifyUseCase:
                 "prediction_count": len(predictions),
                 "predictions": predictions,
                 "message": message,
-                "latest_draw_no": resolved_draw_no,
+                "latest_draw_no": target_draw_no,
                 "latest_draw_date": resolved_draw_date,
                 "strategy": strategy,
                 "seed": seed,
