@@ -40,7 +40,6 @@ resource "google_cloudfunctions2_function" "fetch_loto_results" {
   lifecycle {
     ignore_changes = [
       build_config[0].source[0].storage_source[0].generation,
-      service_config[0].environment_variables,
     ]
   }
 
