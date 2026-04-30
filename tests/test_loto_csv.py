@@ -33,9 +33,11 @@ def test_csv_round_trip() -> None:
     assert len(rows) == 2
     assert rows[0]["lottery_type"] == "loto6"
     assert rows[0]["draw_no"] == 1
+    assert rows[0]["draw_date"] == "20260416"  # YYYYMMDD フォーマット
     assert rows[0]["n1"] == 3
     assert rows[0]["b1"] == 16
     assert rows[1]["lottery_type"] == "loto7"
     assert rows[1]["draw_no"] == 2
+    assert rows[1]["draw_date"] == "20260417"  # YYYYMMDD フォーマット
     assert rows[1]["n7"] == 32
     assert rows[1]["b2"] == 19
