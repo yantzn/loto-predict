@@ -10,6 +10,29 @@ from src.domain.statistics import calculate_bonus_number_scores, calculate_numbe
 
 
 class GenerateAndNotifyUseCase:
+    """
+    ビジネスロジック集約層 - 予想生成と LINE 通知のオーケストレーション
+
+    【役割】
+    - BigQuery（または LocalRepository）から当せん履歴を取得
+    - 統計分析と最適化により出現頻度スコアを計算
+    - 重み付きランダム抽選により予想番号を生成
+    - LINE で通知 / BigQuery に結果を保存
+
+    【層の設計】
+    - Domain（ドメイン層）に依存：純粋な統計・予想ロジックのみ使用
+    - Infrastructure（インフラ層）に依存：リポジトリ、LINE クライアント経由でアクセス
+    - 外部 API は直接呼ばない：インフラ層を経由して依存性注入で管理
+
+    【実行フロー】
+    1. 入力検証（lottery_type, prediction_count, history_limit）
+    2. 履歴取得（最新 N 件を BigQuery から取得）
+    3. スコア最適化（異なる重みで予想を生成し、精度を自動調整）
+    4. 予想生成（出現頻度スコアをもとに重み付きランダム抽選）
+    5. LINE 通知（生成結果をユーザーに通知）
+    6. 結果保存（監査・追跡用に BigQuery に保存）
+    """
+
     def __init__(
         self,
         repository,

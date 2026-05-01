@@ -1,3 +1,5 @@
+"""バックテストツール: LOTO6/7 の予想戦略を事後検証する CLI。"""
+
 from __future__ import annotations
 
 import argparse
@@ -162,6 +164,7 @@ def _normalize_rows(rows: list[dict[str, Any]], lottery_type: str) -> list[dict[
 
 
 def _extract_main_draws(rows: list[dict[str, Any]], lottery_type: str) -> list[list[int]]:
+    """過去の当せん結果から「本数」だけを抽出"""
     pick_count = int(LOTTERY_SPECS[lottery_type]["pick_count"])
     return [
         [int(row[f"n{index}"]) for index in range(1, pick_count + 1)]
@@ -170,6 +173,7 @@ def _extract_main_draws(rows: list[dict[str, Any]], lottery_type: str) -> list[l
 
 
 def _extract_bonus_draws(rows: list[dict[str, Any]], lottery_type: str) -> list[list[int]]:
+    """過去の当せん結果から「ボーナス数」だけを抽出"""
     bonus_count = int(LOTTERY_SPECS[lottery_type]["bonus_count"])
     result: list[list[int]] = []
 
@@ -205,6 +209,7 @@ def _extract_target_numbers(
 
 
 def _judge_loto6_prize(main_match: int, bonus_match: int) -> str:
+    """LOTO6 の当選判定（6個マッチ=1等、5個+bonus=2等...）"""
     if main_match == 6:
         return "1等相当"
     if main_match == 5 and bonus_match >= 1:
@@ -219,6 +224,7 @@ def _judge_loto6_prize(main_match: int, bonus_match: int) -> str:
 
 
 def _judge_loto7_prize(main_match: int, bonus_match: int) -> str:
+    """LOTO7 の当選判定（7個マッチ=1等、6個+bonus=2等...）"""
     if main_match == 7:
         return "1等相当"
     if main_match == 6 and bonus_match >= 1:
@@ -297,6 +303,38 @@ def _evaluate_once(
     strategy: str,
     seed: int,
 ) -> dict[str, Any]:
+    """
+    単一の draw に対して、1 回の予想生成を実施
+
+    【処理流れ】
+    1. target_draw_no の実際の当せん番号を取得
+    2. その draw より前の history_limit 件の履歴から統計計算
+    3. 統計に基づいて prediction_count 口の予想を生成
+    4. 5 票それぞれについて、マッチング数と当選等級を判定
+    5. 最良スコア、1 等/2 等の出現有無を返却
+
+    【output】
+    {
+        'lottery_type': 'loto7',
+        'target_draw_no': 600,
+        'tickets': [
+            {
+                'ticket_no': 1,
+                'profile_name': 'main_hot',
+                'main_match': 3,
+                'bonus_match': 0,
+                'prize': '4等相当',
+                'near_miss_score': 500
+            },
+            ...
+        ],
+        'best_main_match': 4,
+        'best_bonus_match': 1,
+        'best_prize': '5等相当',
+        'first_prize_found': false,
+        'second_prize_found': true
+    }
+    """
     target_row = next(
         (row for row in rows if int(row["draw_no"]) == target_draw_no),
         None,
@@ -404,6 +442,7 @@ def _evaluate_once(
 
 
 def _resolve_target_draws(args: argparse.Namespace) -> list[int]:
+    """CLI から target draw no を解決（単一値、複数値、範囲対応）"""
     if args.target_draws:
         targets = _parse_int_csv(args.target_draws)
     else:
@@ -420,6 +459,7 @@ def _resolve_target_draws(args: argparse.Namespace) -> list[int]:
 
 
 def _resolve_history_limits(args: argparse.Namespace) -> list[int]:
+    """CLI から history_limit を解決（単一値、複数値対応）"""
     if args.history_limits:
         limits = _parse_int_csv(args.history_limits)
     else:
@@ -433,6 +473,7 @@ def _resolve_history_limits(args: argparse.Namespace) -> list[int]:
 
 
 def _resolve_seed_range(args: argparse.Namespace) -> list[int]:
+    """CLI から seed の範囲を解決（単一値、範囲対応）"""
     if args.seed_from is None and args.seed_to is None:
         return [args.seed]
 
@@ -647,6 +688,7 @@ def _print_hit_examples(results: list[dict[str, Any]]) -> None:
 
 
 def _print_batch_summary(results: list[dict[str, Any]]) -> None:
+    """複数 draw/history/seed のバッチ実行結果を統計的に集計・表示"""
     total_runs = len(results)
     total_tickets = sum(len(result["tickets"]) for result in results)
     prize_counts = _summarize_prizes(results)
@@ -725,6 +767,16 @@ def _write_jsonl(path: str, results: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
+    """
+    CLI エントリーポイント
+
+    【処理】
+    1. コマンドライン引数をパース
+    2. target_draws, history_limits, seeds を解決
+    3. ローカル JSONL または BigQuery から履歴データを取得
+    4. target_draw_no ごと、history_limit ごと、seed ごとに評価
+    5. 結果を stdout に出力、または --output-jsonl に保存
+    """
     parser = argparse.ArgumentParser(
         description="Backtest LOTO6/LOTO7 predictions. Local uses JSONL. GCP uses BigQuery."
     )

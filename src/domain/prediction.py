@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from itertools import islice
 
 
+"""予想番号生成の中核ロジックをまとめたドメイン層。"""
+
+
 @dataclass(frozen=True)
 class Loto7Profile:
     name: str
@@ -30,6 +33,14 @@ def _lottery_spec(lottery_type: str) -> tuple[int, int, int]:
 
 
 def _normalize_scores(number_scores: list[tuple[int, float]]) -> dict[int, float]:
+    """
+    スコアのリスト形式を辞書形式に正規化
+
+    入力: [(1, 0.08), (2, 0.12), (3, 0.05), ...]  ← タプルリスト
+    出力: {1: 0.08, 2: 0.12, 3: 0.05, ...}        ← 辞書型
+
+    負のスコアは除外（アルゴリズムが正値を前提）
+    """
     normalized: dict[int, float] = {}
     for number, score in number_scores:
         score_float = float(score)
@@ -44,11 +55,27 @@ def _scale_score_map(
     number_min: int,
     number_max: int,
 ) -> dict[int, float]:
+    """
+    スコアを相対的な優劣を保ちながら 0.0～1.0 の範囲に正規化
+
+    【背景】
+    異なる統計モデル・パラメータから得られたスコアは、
+    スケール（絶対値の大きさ）が異なることがある。
+    最大値で除算し「相対的な差」のみに注目することで、
+    複数のスコアを公平に比較可能にする
+
+    【計算例】
+    元スコア: {1: 0.02, 2: 0.05, 3: 0.01}  → 最大値 = 0.05
+    正規化後: {1: 0.4, 2: 1.0, 3: 0.2}      → 最大値 = 1.0
+
+    【全番号対象】
+    number_min～number_max の全範囲を対象
+    未出現番号（スコア 0.0）も含めて返却
+    """
     values = [
         max(score_map.get(number, 0.0), 0.0)
         for number in range(number_min, number_max + 1)
     ]
-
     max_value = max(values, default=0.0)
     if max_value <= 0:
         return {number: 0.0 for number in range(number_min, number_max + 1)}
@@ -66,6 +93,8 @@ def _build_weights(
     *,
     temperature: float = 1.0,
 ) -> dict[int, float]:
+    # スコアを重みに変換し、temperature で高スコア優先の強さを調整する。
+    # 0 点の番号にも最小重みを残して、完全に選ばれない番号をなくす。
     scaled = _scale_score_map(
         score_map=score_map,
         number_min=number_min,
@@ -89,6 +118,9 @@ def _build_blended_weights(
     bonus_ratio: float,
     temperature: float,
 ) -> dict[int, float]:
+    # LOTO7 ではメインとボーナスの両方のスコアを使う。
+    # main_ratio / bonus_ratio で重み付けし、用途に応じてどちらを優先するかを変える。
+    # 例: メイン寄りなら main_ratio を大きく、ボーナス寄りなら bonus_ratio を大きくする。
     if main_ratio < 0 or bonus_ratio < 0:
         raise ValueError("main_ratio and bonus_ratio must be non-negative")
 
@@ -124,6 +156,8 @@ def _build_ticket_weights(
     ticket_index: int,
     number_usage: dict[int, int],
 ) -> dict[int, float]:
+    # 複数口で同じ番号が固まりすぎないよう、使用済み番号を減衰させる。
+    # 口数が増えるほど temperature を下げて、後続の票を多様化しやすくする。
     if ticket_index <= 0:
         return dict(base_weights)
 
@@ -143,6 +177,8 @@ def _weighted_sample_without_replacement(
     sample_size: int,
     rng: random.Random,
 ) -> list[int]:
+    # スコアに応じた確率で抽選し、重複なしで sample_size 個選ぶ。
+    # 高スコアほど有利だが、固定順ではなくランダム性を残すことで多様性を確保する。
     if sample_size > len(population):
         raise ValueError("sample size is larger than population")
 
@@ -162,10 +198,12 @@ def _weighted_sample_without_replacement(
 
 
 def _order_by_score(selected: list[int], weights: dict[int, float]) -> list[int]:
+    # 出力を見やすくするため、スコア降順・同点は番号昇順に並べる。
     return sorted(selected, key=lambda number: (-weights.get(number, 1.0), number))
 
 
 def _rank_numbers_by_weight(weights: dict[int, float]) -> list[int]:
+    # 全番号をスコア降順で並べる。
     return [
         number
         for number, _ in sorted(weights.items(), key=lambda item: (-item[1], item[0]))
@@ -173,10 +211,12 @@ def _rank_numbers_by_weight(weights: dict[int, float]) -> list[int]:
 
 
 def _build_anchor_ticket(ranked_numbers: list[int], pick_count: int) -> list[int]:
+    # 上位番号をそのまま採用する、最も保守的な戦略。
     return list(islice(ranked_numbers, pick_count))
 
 
 def _build_balanced_ticket(ranked_numbers: list[int], pick_count: int) -> list[int]:
+    # 上位を残しつつ中位層も混ぜて、確実性と多様性の両方を狙う。
     if len(ranked_numbers) <= pick_count:
         return list(ranked_numbers)
 
@@ -187,6 +227,7 @@ def _build_balanced_ticket(ranked_numbers: list[int], pick_count: int) -> list[i
 
 
 def _build_even_odd_ticket(ranked_numbers: list[int], pick_count: int) -> list[int]:
+    # 偶数・奇数が偏りすぎないように並びを作る。
     top_pool = ranked_numbers[: max(pick_count * 3, pick_count)]
     evens = [number for number in top_pool if number % 2 == 0]
     odds = [number for number in top_pool if number % 2 == 1]
@@ -201,6 +242,7 @@ def _build_even_odd_ticket(ranked_numbers: list[int], pick_count: int) -> list[i
 
 
 def _build_spread_ticket(ranked_numbers: list[int], pick_count: int) -> list[int]:
+    # 上位層を間引いて、広がりのある票を作る。
     top_pool = ranked_numbers[: max(pick_count * 3, pick_count)]
     ticket: list[int] = []
 
@@ -220,6 +262,7 @@ def _build_spread_ticket(ranked_numbers: list[int], pick_count: int) -> list[int
 
 
 def _build_mixed_depth_ticket(ranked_numbers: list[int], pick_count: int) -> list[int]:
+    # 上位・中位・下位を混ぜて、多様性を最大化する。
     head_count = max(2, pick_count // 3)
     head = ranked_numbers[:head_count]
     middle = ranked_numbers[head_count : head_count + pick_count * 2]
@@ -241,6 +284,7 @@ def _build_strategy_tickets(
     ranked_numbers: list[int],
     pick_count: int,
 ) -> list[list[int]]:
+    # 5 種類の戦略で候補チケットを作る。
     candidates = [
         _build_anchor_ticket(ranked_numbers, pick_count),
         _build_balanced_ticket(ranked_numbers, pick_count),
@@ -259,6 +303,7 @@ def _generate_default_predictions(
     seed: int | None = None,
     excluded_combinations: set[tuple[int, ...]] | None = None,
 ) -> list[list[int]]:
+    # 5 つの戦略をまず試し、足りなければランダム抽選で補う。
     number_min, number_max, pick_count = _lottery_spec(lottery_type)
 
     if prediction_count <= 0:
@@ -344,6 +389,7 @@ def _generate_default_predictions(
 
 
 def _loto7_profiles(prediction_count: int) -> list[Loto7Profile]:
+    # LOTO7 では 5 種類の見方を持たせて、票ごとに異なる戦略を使う。
     profiles = [
         Loto7Profile(
             name="main_hot",
@@ -426,6 +472,7 @@ def _generate_loto7_profile_prediction(
     seen: set[tuple[int, ...]],
     ticket_index: int,
 ) -> list[int]:
+    # プロフィールごとに重みとプールを変えて、同じ履歴から別の視点を作る。
     main_weights = _build_blended_weights(
         number_min=1,
         number_max=37,
@@ -533,6 +580,7 @@ def generate_loto7_second_prize_oriented_predictions(
     seed: int | None = None,
     excluded_combinations: set[tuple[int, ...]] | None = None,
 ) -> list[list[int]]:
+    # 2 等を狙いやすいよう、LOTO7 専用の 5 プロフィールで予想する。
     if prediction_count <= 0:
         raise ValueError("prediction_count must be greater than 0")
 
@@ -573,6 +621,7 @@ def generate_predictions(
     strategy: str = "default",
     bonus_scores: list[tuple[int, float]] | None = None,
 ) -> list[list[int]]:
+    # 呼び出し側に対して、default / second_prize_oriented / mixed を統一的に扱う。
     normalized_lottery_type = str(lottery_type).strip().lower()
     normalized_strategy = str(strategy).strip().lower()
 

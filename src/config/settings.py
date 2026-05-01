@@ -1,9 +1,11 @@
+"""設定管理: 環境変数の読み込み、検証、キャッシュを行う。"""
+
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 
@@ -11,12 +13,12 @@ _LOCAL_ENV_LOADED = False
 
 
 def _load_local_env_file() -> None:
+    """ローカル開発用の .env.local を、未設定の変数だけ補完する。"""
     global _LOCAL_ENV_LOADED
     if _LOCAL_ENV_LOADED:
         return
 
-    # pytest 実行時はテスト側の環境制御を優先し、ローカル .env の自動注入で
-    # 期待値が変わらないようにする。
+    # pytest 実行時はテスト側の環境を優先し、外部の .env.local で結果が変わるのを防ぐ。
     if os.getenv("PYTEST_CURRENT_TEST"):
         _LOCAL_ENV_LOADED = True
         return
@@ -38,7 +40,7 @@ def _load_local_env_file() -> None:
         if not key:
             continue
 
-        # 実行時に明示された環境変数を最優先し、.env.local は不足分だけ補完する。
+        # 実行時に明示された環境変数を最優先し、.env.local は不足分だけ補う。
         if os.getenv(key) is None:
             os.environ[key] = value
 
@@ -46,6 +48,7 @@ def _load_local_env_file() -> None:
 
 
 def _first_env(*names: str, default: Optional[str] = None) -> Optional[str]:
+    """複数の候補名から最初の非空環境変数を返す。"""
     for name in names:
         value = os.getenv(name)
         if value is not None and str(value).strip() != "":
@@ -54,6 +57,7 @@ def _first_env(*names: str, default: Optional[str] = None) -> Optional[str]:
 
 
 def _to_int(value: Optional[str], default: int) -> int:
+    """文字列を整数に変換し、空なら default を返す。"""
     if value is None or str(value).strip() == "":
         return default
     return int(str(value).strip())
@@ -61,6 +65,8 @@ def _to_int(value: Optional[str], default: int) -> int:
 
 @dataclass(frozen=True)
 class GCPSettings:
+    """GCP のリソース名をまとめる設定。"""
+
     project_id: str
     region: str
     bigquery_dataset: str
@@ -74,6 +80,8 @@ class GCPSettings:
 
 @dataclass(frozen=True)
 class LotterySettings:
+    """LOTO6/7 の参照履歴件数や予想口数をまとめる設定。"""
+
     default_stats_target_draws: int
     history_limit_loto6: int
     history_limit_loto7: int
@@ -86,6 +94,7 @@ class LotterySettings:
     loto7_pick_count: int
 
     def stats_target_draws_for(self, lottery_type: str) -> int:
+        """ロト種別ごとの参照履歴件数を返す。"""
         normalized = str(lottery_type).strip().lower()
         if normalized == "loto6":
             return self.history_limit_loto6 or self.default_stats_target_draws
@@ -96,18 +105,24 @@ class LotterySettings:
 
 @dataclass(frozen=True)
 class LineSettings:
+    """LINE Messaging API の認証情報。"""
+
     channel_access_token: Optional[str]
     user_id: Optional[str]
 
 
 @dataclass(frozen=True)
 class LoggingSettings:
+    """ログレベルとサービス名の設定。"""
+
     level: str
     service_name: str
 
 
 @dataclass(frozen=True)
 class AppSettings:
+    """アプリ全体の統合設定オブジェクト。"""
+
     app_env: str
     app_timezone: str
     gcp: GCPSettings
@@ -126,6 +141,7 @@ class AppSettings:
 
 
 def _validate(settings: AppSettings) -> None:
+    """設定値の整合性を起動時に確認する。"""
     lottery = settings.lottery
 
     if lottery.default_stats_target_draws <= 0:
@@ -151,6 +167,7 @@ def _validate(settings: AppSettings) -> None:
 
 
 def require_line_settings(settings: AppSettings) -> None:
+    """LINE 送信に必要な設定が揃っているか確認する。"""
     if not settings.line.channel_access_token:
         raise ValueError("LINE_CHANNEL_ACCESS_TOKEN is required")
     if not settings.line.user_id:
@@ -159,6 +176,7 @@ def require_line_settings(settings: AppSettings) -> None:
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
+    """設定を 1 回だけ組み立てて再利用する。"""
     _load_local_env_file()
 
     app_env = _first_env("APP_ENV", default="local") or "local"
@@ -202,5 +220,4 @@ def get_settings() -> AppSettings:
         local_storage_path=_first_env("LOCAL_STORAGE_PATH", default="./local_storage") or "./local_storage",
     )
     _validate(settings)
-
     return settings
