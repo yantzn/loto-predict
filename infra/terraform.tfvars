@@ -35,5 +35,5 @@ line_channel_access_token_secret_id = "line_channel_access_token"
 line_user_id_secret_id              = "line_user_id"
 
 scheduler_time_zone = "Asia/Tokyo"
-fetch_loto6_cron    = "5 19 * * 1,4"
-fetch_loto7_cron    = "5 19 * * 5"
+fetch_loto6_cron    = "0 21 * * 1,4"
+fetch_loto7_cron    = "0 21 * * 5"
