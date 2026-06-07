@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+# This CLI performs rolling backtests for LOTO6/LOTO7 strategies.
+# It trains only on draws before each target draw and reports historical
+# reference metrics for strategy/profile/history_limit/seed comparisons.
 import argparse
 import json
 import os
 import sys
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +17,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
 
 from src.domain.prediction import generate_predictions
+from src.domain.scorers.pair_cooccurrence import PairConfig
 from src.domain.statistics import (
     ScoreWeights,
     calculate_bonus_number_scores,
     calculate_main_number_scores,
 )
+from src.domain.strategies.ema_recency import EmaRecencyConfig
+from src.domain.strategies.mixed_loto6 import (
+    MIXED_LOTO6_PROFILES,
+    PROFILE_ROLES as LOTO6_PROFILE_ROLES,
+)
+from src.domain.strategies.mixed_v2 import build_lane3_pair_weighted_scores
+from src.domain.strategies.mixed_v3 import (
+    MIXED_V3_PROFILES,
+    PROFILE_ROLES,
+)
+from src.domain.strategies.triple_weighted import TripleWeightedConfig, build_triple_weighted_scores
+from src.evaluation.expected_value import compute_expected_value
+from src.evaluation.prize_tables import prize_table_for_draw
 
 
 LOTTERY_SPECS = {
@@ -42,6 +60,24 @@ LOTO7_PROFILE_BY_TICKET_NO = {
     3: "main_wide_bonus_hot",
     4: "main5_bonus2_balanced",
     5: "main5_bonus2_explore",
+}
+
+LOTO7_PROFILE_BY_TICKET_NO_MIXED_V2 = {
+    1: "lane1_ema_hot_or_main_hot",
+    2: "lane2_main_balanced_or_ema_balanced",
+    3: "lane3_pair_weighted",
+    4: "lane4_bonus2_balanced",
+    5: "lane5_diverse_explore",
+}
+
+LOTO7_PROFILE_BY_TICKET_NO_MIXED_V3 = {
+    index: profile
+    for index, profile in enumerate(MIXED_V3_PROFILES, start=1)
+}
+
+LOTO6_PROFILE_BY_TICKET_NO_MIXED = {
+    index: profile
+    for index, profile in enumerate(MIXED_LOTO6_PROFILES, start=1)
 }
 
 
@@ -293,6 +329,159 @@ def _build_training_rows(
     return sorted(train_rows, key=lambda row: int(row["draw_no"]), reverse=True)[:history_limit]
 
 
+def _compute_diversity_metrics(predictions: list[list[int]]) -> tuple[float, float, int]:
+    if not predictions:
+        return 0.0, 0.0, 0
+
+    pairwise_jaccard: list[float] = []
+    pairwise_overlap: list[int] = []
+    unique_numbers = set()
+
+    for index_a, index_b in combinations(range(len(predictions)), 2):
+        a = predictions[index_a]
+        b = predictions[index_b]
+        intersection = set(a) & set(b)
+        union = set(a) | set(b)
+        pairwise_jaccard.append(len(intersection) / len(union) if union else 0.0)
+        pairwise_overlap.append(len(intersection))
+
+    avg_jaccard = sum(pairwise_jaccard) / len(pairwise_jaccard) if pairwise_jaccard else 0.0
+    avg_overlap = sum(pairwise_overlap) / len(pairwise_overlap) if pairwise_overlap else 0.0
+    for ticket in predictions:
+        unique_numbers.update(ticket)
+
+    return avg_jaccard, avg_overlap, len(unique_numbers)
+
+
+def _score_breakdown_for_ticket(
+    *,
+    strategy: str,
+    profile_name: str,
+    prediction: list[int],
+    history: list[list[int]],
+    main_score_map: dict[int, float],
+    bonus_score_map: dict[int, float] | None = None,
+    pair_config: PairConfig | None = None,
+    triple_config: TripleWeightedConfig | None = None,
+) -> dict[str, Any]:
+    base_values = list(main_score_map.values())
+    max_base = max(base_values, default=0.0)
+    base = (
+        sum(main_score_map.get(number, 0.0) for number in prediction)
+        / (max_base * len(prediction))
+        if max_base > 0 and prediction
+        else 0.0
+    )
+    breakdown: dict[str, Any] = {
+        "base": round(base, 6),
+        "ema": 0.0,
+        "pair": 0.0,
+        "triple": 0.0,
+        "pair_affinity": 0.0,
+        "bonus_affinity": 0.0,
+        "coverage_gap": 0.0,
+        "combination_fit": 0.0,
+        "diversity_penalty": 0.0,
+        "fallback_used": False,
+    }
+
+    if strategy == "mixed_v2" and profile_name == "lane3_pair_weighted":
+        selected: list[int] = []
+        pair_rows: list[dict[str, float | bool]] = []
+        for number in prediction:
+            rows = build_lane3_pair_weighted_scores(
+                history=history,
+                main_score_map=main_score_map,
+                selected=selected,
+                config=pair_config or PairConfig(),
+            )
+            row = rows.get(number)
+            if row is not None:
+                pair_rows.append(row)
+            selected.append(number)
+        if pair_rows:
+            breakdown.update(
+                {
+                    "base": round(sum(float(row["base"]) for row in pair_rows) / len(pair_rows), 6),
+                    "ema": round(sum(float(row["ema"]) for row in pair_rows) / len(pair_rows), 6),
+                    "pair": round(sum(float(row["pair"]) for row in pair_rows) / len(pair_rows), 6),
+                    "triple": 0.0,
+                    "diversity_penalty": 0.0,
+                    "fallback_used": any(bool(row["fallback_used"]) for row in pair_rows),
+                }
+            )
+
+    if strategy == "triple_weighted":
+        selected = []
+        triple_rows: list[dict[str, float | bool]] = []
+        config = triple_config or TripleWeightedConfig()
+        for number in prediction:
+            rows = build_triple_weighted_scores(
+                history=history,
+                selected=selected,
+                config=config,
+            )
+            row = rows.get(number)
+            if row is not None:
+                triple_rows.append(row)
+            selected.append(number)
+        if triple_rows:
+            breakdown.update(
+                {
+                    "base": round(sum(float(row["base"]) for row in triple_rows) / len(triple_rows), 6),
+                    "ema": round(sum(float(row["ema"]) for row in triple_rows) / len(triple_rows), 6),
+                    "pair": round(sum(float(row["pair"]) for row in triple_rows) / len(triple_rows), 6),
+                    "triple": round(sum(float(row["triple"]) for row in triple_rows) / len(triple_rows), 6),
+                    "diversity_penalty": 0.0,
+                    "fallback_used": any(bool(row["fallback_used"]) for row in triple_rows),
+                }
+            )
+
+    if strategy == "mixed_v3":
+        # Backtests can emit hundreds of thousands of ticket rows. Recomputing the
+        # full profile scoring table for every emitted ticket makes JSONL output
+        # dominate runtime, so this trace uses already computed score maps and
+        # leaves generation-time scoring unchanged.
+        bonus_score_map = bonus_score_map or {number: 0.0 for number in range(1, 38)}
+        if prediction:
+            max_bonus = max(bonus_score_map.values(), default=0.0)
+            bonus_affinity = (
+                sum(bonus_score_map.get(number, 0.0) for number in prediction)
+                / (max_bonus * len(prediction))
+                if max_bonus > 0
+                else 0.0
+            )
+            breakdown["primary_frequency"] = breakdown["base"]
+            breakdown["secondary_frequency"] = breakdown["base"]
+            breakdown["recent_frequency"] = breakdown["base"]
+            breakdown["ema_recent"] = breakdown["base"]
+            breakdown["pair_affinity"] = 0.0
+            breakdown["bonus_affinity"] = round(bonus_affinity, 6)
+            breakdown["coverage_gap"] = 0.0
+            breakdown["gap"] = 0.0
+            breakdown["trend"] = 0.0
+            breakdown["combination_fit"] = 0.0
+            breakdown["ema"] = breakdown["base"]
+            breakdown["pair"] = 0.0
+            breakdown["triple"] = 0.0
+
+    if strategy == "mixed_loto6":
+        # Keep LOTO6 JSONL trace compatible with the LOTO7 strategy metadata.
+        # Generation-time profile scoring lives in mixed_loto6.py; this lightweight
+        # trace exposes the comparable high-level components without rerunning the
+        # candidate search for every ticket.
+        breakdown["primary_frequency"] = breakdown["base"]
+        breakdown["secondary_frequency"] = breakdown["base"]
+        breakdown["recent_frequency"] = breakdown["base"]
+        breakdown["long_frequency"] = breakdown["base"]
+        breakdown["gap"] = 0.0
+        breakdown["trend"] = 0.0
+        breakdown["combination_fit"] = 0.0
+        breakdown["ema"] = breakdown["base"]
+
+    return breakdown
+
+
 def _evaluate_once(
     *,
     rows: list[dict[str, Any]],
@@ -302,6 +491,13 @@ def _evaluate_once(
     prediction_count: int,
     strategy: str,
     seed: int,
+    pair_config: PairConfig | None = None,
+    triple_config: TripleWeightedConfig | None = None,
+    ema_config: EmaRecencyConfig | None = None,
+    selector_max_overlap: int | None = None,
+    selector_min_jaccard_distance: float | None = None,
+    selector_candidate_pool_size: int | None = None,
+    selector_diversity_weight: float | None = None,
 ) -> dict[str, Any]:
     """
     単一の draw に対して、1 回の予想生成を実施
@@ -355,6 +551,13 @@ def _evaluate_once(
     main_scores = calculate_main_number_scores(main_draws, weights)
     bonus_scores = calculate_bonus_number_scores(bonus_draws, weights)
 
+    strategy_history = main_draws
+    if strategy == "ema_recency" and ema_config is not None and ema_config.include_bonus:
+        strategy_history = [
+            sorted(set(main + bonus))
+            for main, bonus in zip(main_draws, bonus_draws)
+        ]
+
     predictions = generate_predictions(
         number_scores=main_scores,
         bonus_scores=bonus_scores,
@@ -362,6 +565,16 @@ def _evaluate_once(
         prediction_count=prediction_count,
         strategy=strategy,
         seed=seed,
+        target_draw=target_draw_no,
+        history_limit=history_limit,
+        history=strategy_history,
+        pair_config=pair_config,
+        triple_config=triple_config,
+        ema_config=ema_config,
+        selector_max_overlap=selector_max_overlap,
+        selector_min_jaccard_distance=selector_min_jaccard_distance,
+        selector_candidate_pool_size=selector_candidate_pool_size,
+        selector_diversity_weight=selector_diversity_weight,
     )
 
     tickets: list[dict[str, Any]] = []
@@ -402,10 +615,37 @@ def _evaluate_once(
             best_prize = prize
             best_near_miss_score = near_miss_score
 
-        profile_name = (
-            LOTO7_PROFILE_BY_TICKET_NO.get(ticket_no, f"profile_{ticket_no}")
-            if lottery_type == "loto7"
-            else f"ticket_{ticket_no}"
+        if lottery_type == "loto7":
+            if strategy == "mixed_v3":
+                profile_name = LOTO7_PROFILE_BY_TICKET_NO_MIXED_V3.get(ticket_no, f"lane_{ticket_no}")
+            elif strategy == "mixed_v2":
+                profile_name = LOTO7_PROFILE_BY_TICKET_NO_MIXED_V2.get(ticket_no, f"lane_{ticket_no}")
+            elif strategy == "triple_weighted":
+                profile_name = f"triple_weighted_ticket_{ticket_no}"
+            else:
+                profile_name = LOTO7_PROFILE_BY_TICKET_NO.get(ticket_no, f"profile_{ticket_no}")
+        elif strategy == "mixed_loto6":
+            profile_name = LOTO6_PROFILE_BY_TICKET_NO_MIXED.get(ticket_no, f"l6_ticket_{ticket_no}")
+        else:
+            profile_name = f"ticket_{ticket_no}"
+
+        score_breakdown = _score_breakdown_for_ticket(
+            strategy=strategy,
+            profile_name=profile_name,
+            prediction=prediction,
+            history=strategy_history,
+            main_score_map=dict(main_scores),
+            bonus_score_map=dict(bonus_scores),
+            pair_config=pair_config,
+            triple_config=triple_config,
+        )
+        score = round(
+            float(score_breakdown["base"])
+            + float(score_breakdown["ema"])
+            + float(score_breakdown["pair"])
+            + float(score_breakdown["triple"])
+            - float(score_breakdown["diversity_penalty"]),
+            6,
         )
 
         tickets.append(
@@ -413,12 +653,32 @@ def _evaluate_once(
                 "ticket_no": ticket_no,
                 "profile_name": profile_name,
                 "prediction": prediction,
+                "score": score,
+                "score_breakdown": score_breakdown,
                 "main_match": main_match,
                 "bonus_match": bonus_match,
                 "prize": prize,
                 "near_miss_score": near_miss_score,
             }
         )
+
+    avg_pairwise_jaccard, avg_pairwise_overlap, unique_number_coverage = _compute_diversity_metrics(predictions)
+
+    prize_counts: dict[str, int] = {}
+    for ticket in tickets:
+        prize = ticket["prize"]
+        prize_counts[prize] = prize_counts.get(prize, 0) + 1
+
+    if lottery_type == "loto7":
+        prize_table = prize_table_for_draw(lottery_type, target_draw_no)
+        ev_metrics = compute_expected_value(prize_counts, prize_table)
+    else:
+        ev_metrics = {
+            "expected_value_sum": 0.0,
+            "expected_value_per_ticket": 0.0,
+            "roi_proxy": 0.0,
+            "prize_table_version": "unsupported",
+        }
 
     return {
         "lottery_type": lottery_type,
@@ -438,6 +698,13 @@ def _evaluate_once(
         "best_near_miss_score": best_near_miss_score,
         "first_prize_found": first_prize_found,
         "second_prize_found": second_prize_found,
+        "avg_pairwise_jaccard": round(avg_pairwise_jaccard, 4),
+        "avg_pairwise_overlap": round(avg_pairwise_overlap, 4),
+        "unique_number_coverage": unique_number_coverage,
+        "expected_value_sum": ev_metrics["expected_value_sum"],
+        "expected_value_per_ticket": ev_metrics["expected_value_per_ticket"],
+        "roi_proxy": ev_metrics["roi_proxy"],
+        "prize_table_version": ev_metrics["prize_table_version"],
     }
 
 
@@ -544,6 +811,13 @@ def _print_single_result(result: dict[str, Any], source: str) -> None:
     print(f"best_bonus_match: {result['best_bonus_match']}")
     print(f"best_prize: {result['best_prize']}")
     print(f"best_near_miss_score: {result['best_near_miss_score']}")
+    print(f"avg_pairwise_jaccard: {result.get('avg_pairwise_jaccard', 0.0)}")
+    print(f"avg_pairwise_overlap: {result.get('avg_pairwise_overlap', 0.0)}")
+    print(f"unique_number_coverage: {result.get('unique_number_coverage', 0)}")
+    print(f"expected_value_sum: {result.get('expected_value_sum', 0.0)}")
+    print(f"expected_value_per_ticket: {result.get('expected_value_per_ticket', 0.0)}")
+    print(f"roi_proxy: {result.get('roi_proxy', 0.0)}")
+    print(f"prize_table_version: {result.get('prize_table_version', 'unknown')}")
     print(f"first_prize_found: {str(result['first_prize_found']).lower()}")
     print(f"second_prize_found: {str(result['second_prize_found']).lower()}")
 
@@ -756,6 +1030,120 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
             f"{str(result['second_prize_found']).lower():5}"
         )
 
+    lottery_type = str(results[0].get("lottery_type", "loto7")) if results else "loto7"
+    strategy = str(results[0].get("strategy", "")) if results else ""
+    if lottery_type == "loto6":
+        comparison_hint = {
+            "strategy_comparison_hint": {
+                "baseline_strategy": "default",
+                "candidate_strategy": strategy or "mixed_loto6",
+                "primary_metric": "avg_best_score",
+                "secondary_metrics": [
+                    "third_prize_count",
+                    "fourth_prize_count",
+                    "fifth_prize_count",
+                    "score_stddev",
+                ],
+                "adoption_rule": (
+                    "Adopt mixed_loto6 only if it improves upper-prize counts or "
+                    "avg_best_score without relying on a single seed or draw."
+                ),
+            }
+        }
+        adoption = {
+            "adoption_recommendation": {
+                "candidate_strategy": strategy or "mixed_loto6",
+                "baseline_strategy": "default",
+                "should_adopt": False,
+                "reason": "Use validation and holdout comparison before treating mixed_loto6 as production default.",
+            }
+        }
+    else:
+        comparison_hint = {
+            "strategy_comparison_hint": {
+                "baseline_strategy": "mixed_v2",
+                "candidate_strategy": "mixed_v3",
+                "primary_metric": "avg_best_score",
+                "secondary_metrics": [
+                    "third_prize_count",
+                    "fourth_prize_count",
+                    "hit4_or_more_rate",
+                    "hit5_or_more_rate",
+                    "second_prize_runs",
+                ],
+                "adoption_rule": (
+                    "Adopt mixed_v3 only if it improves 3rd/4th prize counts or "
+                    "avg_best_score without eliminating bonus-aware upside."
+                ),
+            }
+        }
+        adoption = {
+            "adoption_recommendation": {
+                "candidate_strategy": "mixed_v3",
+                "baseline_strategy": "mixed_v2_fix",
+                "should_adopt": False,
+                "reason": "Adopt only after 600-674 validation and 650-679 validation improve key metrics.",
+            }
+        }
+
+    print()
+    print("strategy_comparison_hint:")
+    print(json.dumps(comparison_hint, ensure_ascii=False, indent=2))
+
+    print()
+    print("adoption_recommendation:")
+    print(json.dumps(adoption, ensure_ascii=False, indent=2))
+
+
+def _print_triplet_holdout_summary(comparisons: list[dict[str, Any]]) -> None:
+    if not comparisons:
+        print("No holdout comparisons were performed.")
+        return
+
+    total_runs = len(comparisons)
+    pair_total = sum(comp["pair_expected_value_per_ticket"] for comp in comparisons)
+    triple_total = sum(comp["triple_expected_value_per_ticket"] for comp in comparisons)
+    avg_pair = pair_total / total_runs
+    avg_triple = triple_total / total_runs
+    avg_delta = avg_triple - avg_pair
+
+    improved_runs = sum(
+        1 for comp in comparisons
+        if comp["triple_expected_value_per_ticket"] > comp["pair_expected_value_per_ticket"]
+    )
+    tied_runs = sum(
+        1 for comp in comparisons
+        if comp["triple_expected_value_per_ticket"] == comp["pair_expected_value_per_ticket"]
+    )
+    worse_runs = total_runs - improved_runs - tied_runs
+
+    percent_improved = improved_runs / total_runs * 100.0
+    percent_worse = worse_runs / total_runs * 100.0
+    percent_tied = tied_runs / total_runs * 100.0
+
+    print()
+    print("TRIPLET HOLDOUT SUMMARY")
+    print("=" * 120)
+    print(f"runs: {total_runs}")
+    print(f"pair_weighted avg EV per ticket: {avg_pair:.6f}")
+    print(f"triple_weighted avg EV per ticket: {avg_triple:.6f}")
+    print(f"avg delta: {avg_delta:.6f}")
+    print(f"improved: {improved_runs} ({percent_improved:.1f}%)")
+    print(f"tied: {tied_runs} ({percent_tied:.1f}%)")
+    print(f"worse: {worse_runs} ({percent_worse:.1f}%)")
+
+    relative_uplift = (
+        abs(avg_delta / avg_pair)
+        if abs(avg_pair) > 1e-9
+        else float("inf") if avg_delta > 0 else 0.0
+    )
+    adopt_recommended = avg_delta > 0 and percent_improved >= 50.0 and relative_uplift >= 0.01
+    if adopt_recommended:
+        print("Recommendation: adopt triple_weighted in holdout; it shows a positive uplift.")
+    else:
+        print("Recommendation: keep triple_weighted behind a feature flag until the holdout improvement is stronger.")
+    print("Note: triple_weighted is feature-flag safe by default because --triplet-weight defaults to 0.0.")
+
 
 def _write_jsonl(path: str, results: list[dict[str, Any]]) -> None:
     output_path = Path(path)
@@ -763,7 +1151,55 @@ def _write_jsonl(path: str, results: list[dict[str, Any]]) -> None:
 
     with output_path.open("w", encoding="utf-8") as file:
         for result in results:
-            file.write(json.dumps(result, ensure_ascii=False) + "\n")
+            for ticket in result["tickets"]:
+                # Flatten the ticket into its own row for detailed traceability
+                row = {
+                    "strategy": result["strategy"],
+                    "strategy_version": "1.0",
+                    "profile": ticket["profile_name"],
+                    "profile_learning_key": (
+                        f"{result['strategy']}:{ticket['profile_name']}:"
+                        f"history{result['history_limit']}:draw{result['target_draw_no']}"
+                    ),
+                    "profile_learning_candidate": result["strategy"] in {"mixed_loto6", "mixed_v2", "mixed_v3"},
+                    "profile_role": {
+                        **LOTO6_PROFILE_ROLES,
+                        **PROFILE_ROLES,
+                    }.get(ticket["profile_name"], ""),
+                    "seed_optimization_used": False,
+                    "target_draw": result["target_draw_no"],
+                    "history_limit": result["history_limit"],
+                    "seed": result["seed"],
+                    "ticket_index": ticket["ticket_no"],
+                    "prediction": ticket["prediction"],
+                    "score": ticket.get("score", 0.0),
+                    "score_breakdown": ticket.get(
+                        "score_breakdown",
+                        {
+                            "base": 0.0,
+                            "ema": 0.0,
+                            "pair": 0.0,
+                            "triple": 0.0,
+                            "diversity_penalty": 0.0,
+                            "fallback_used": False,
+                        },
+                    ),
+                    "matched_main": ticket["main_match"],
+                    "matched_bonus": ticket["bonus_match"],
+                    "prize_equivalent": ticket["prize"],
+                    
+                    # Backward compatibility fields for analyze_experiment_results.py
+                    "lottery_type": result["lottery_type"],
+                    "target_draw_no": result["target_draw_no"],
+                    "best_near_miss_score": result["best_near_miss_score"],
+                    "avg_pairwise_jaccard": result.get("avg_pairwise_jaccard", 0.0),
+                    "unique_number_coverage": result.get("unique_number_coverage", 0),
+                    "expected_value_per_ticket": result.get("expected_value_per_ticket", 0.0),
+                    "expected_value_sum": result.get("expected_value_sum", 0.0),
+                    "roi_proxy": result.get("roi_proxy", 0.0),
+                    "tickets": [ticket], # Single-ticket array so second_count logic works
+                }
+                file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def main() -> None:
@@ -793,8 +1229,45 @@ def main() -> None:
     parser.add_argument("--prediction-count", type=int, default=5)
     parser.add_argument(
         "--strategy",
-        choices=["default", "second_prize_oriented", "mixed"],
+        choices=["default", "mixed", "mixed_loto6", "mixed_v2", "mixed_v3", "triple_weighted"],
         default="mixed",
+        help=(
+            "Prediction strategy to use. Available: default, mixed, mixed_loto6, "
+            "mixed_v2, mixed_v3, triple_weighted"
+        ),
+    )
+
+    parser.add_argument("--pair-weight", type=float, default=1.0)
+    parser.add_argument("--pair-laplace", type=float, default=1.0)
+    parser.add_argument("--pair-shrink-k", type=float, default=5.0)
+    parser.add_argument("--pair-decay", type=float, default=0.0)
+
+    parser.add_argument("--ema-alpha-short", type=float, default=0.20)
+    parser.add_argument("--ema-alpha-mid", type=float, default=0.10)
+    parser.add_argument("--ema-alpha-long", type=float, default=0.05)
+    parser.add_argument("--ema-short-weight", type=float, default=0.45)
+    parser.add_argument("--ema-mid-weight", type=float, default=0.35)
+    parser.add_argument("--ema-long-weight", type=float, default=0.20)
+    parser.add_argument(
+        "--ema-include-bonus",
+        choices=["true", "false"],
+        default="false",
+        help="Whether to include bonus numbers when computing EMA recency scores.",
+    )
+
+    parser.add_argument("--selector-max-overlap", type=int, default=4)
+    parser.add_argument("--selector-min-jaccard-distance", type=float, default=0.43)
+    parser.add_argument("--selector-candidate-pool-size", type=int, default=0)
+    parser.add_argument("--selector-diversity-weight", type=float, default=0.25)
+
+    parser.add_argument("--triplet-top-n", type=int, default=500)
+    parser.add_argument("--triplet-shrink-k", type=float, default=10.0)
+    parser.add_argument("--triplet-weight", type=float, default=0.0)
+    parser.add_argument("--triplet-laplace", type=float, default=1.0)
+    parser.add_argument("--triplet-decay", type=float, default=0.0)
+    parser.add_argument("--triplet-top-pool-size", type=int, default=20)
+    parser.add_argument("--triplet-holdout", action="store_true", default=False,
+        help="Compare pair_weighted and triple_weighted on the same holdout set."
     )
 
     parser.add_argument("--seed", type=int, default=42)
@@ -813,7 +1286,13 @@ def main() -> None:
             "Specify one of --target-draw-no, --target-draws, or --target-draw-from/--target-draw-to."
         )
 
-    if lottery_type == "loto6" and args.strategy in {"second_prize_oriented", "mixed"}:
+    if lottery_type == "loto6" and args.strategy in {
+        "mixed_v2",
+        "mixed_v3",
+        "triple_weighted",
+        "pair_weighted",
+        "ema_recency",
+    }:
         print("warning: strategy is for loto7 only. fallback to default for loto6.")
         args.strategy = "default"
 
@@ -832,10 +1311,124 @@ def main() -> None:
         lottery_type,
     )
 
+    existing_draw_nos = {int(row["draw_no"]) for row in rows}
+    requested_target_draws = list(target_draws)
+    missing_target_draws = [
+        draw_no
+        for draw_no in requested_target_draws
+        if draw_no not in existing_draw_nos
+    ]
+    target_draws = [
+        draw_no
+        for draw_no in requested_target_draws
+        if draw_no in existing_draw_nos
+    ]
+    if not target_draws:
+        raise ValueError("no requested target draws exist in the input history")
+    if missing_target_draws:
+        print(
+            "missing target draws skipped: "
+            f"count={len(missing_target_draws)} "
+            f"first={missing_target_draws[:20]}"
+        )
+
     source = "jsonl" if args.input_jsonl else "bigquery"
     batch_mode = len(target_draws) > 1 or len(history_limits) > 1 or len(seeds) > 1
 
     results: list[dict[str, Any]] = []
+
+    pair_config = None
+    triple_config = None
+    ema_config = None
+    if args.strategy == "pair_weighted" or args.triplet_holdout:
+        pair_config = PairConfig(
+            pair_weight=float(args.pair_weight),
+            laplace=float(args.pair_laplace),
+            shrink_k=float(args.pair_shrink_k),
+            decay=float(args.pair_decay) if args.pair_decay > 0 else None,
+        )
+
+    if args.strategy == "triple_weighted" or args.triplet_holdout:
+        triple_config = TripleWeightedConfig(
+            top_n=int(args.triplet_top_n),
+            shrink_k=float(args.triplet_shrink_k),
+            triplet_weight=float(args.triplet_weight),
+            laplace=float(args.triplet_laplace),
+            decay=float(args.triplet_decay) if args.triplet_decay > 0 else None,
+            top_pool_size=int(args.triplet_top_pool_size),
+        )
+
+    if args.strategy == "ema_recency":
+        ema_config = EmaRecencyConfig(
+            alpha_short=float(args.ema_alpha_short),
+            alpha_mid=float(args.ema_alpha_mid),
+            alpha_long=float(args.ema_alpha_long),
+            short_weight=float(args.ema_short_weight),
+            mid_weight=float(args.ema_mid_weight),
+            long_weight=float(args.ema_long_weight),
+            include_bonus=args.ema_include_bonus == "true",
+        )
+
+    if args.triplet_holdout:
+        if lottery_type != "loto7":
+            raise ValueError("holdout comparison is only supported for loto7")
+
+        comparisons: list[dict[str, Any]] = []
+        holdout_results: list[dict[str, Any]] = []
+
+        for target_draw_no in target_draws:
+            for history_limit in history_limits:
+                for seed in seeds:
+                    pair_result = _evaluate_once(
+                        rows=rows,
+                        lottery_type=lottery_type,
+                        target_draw_no=target_draw_no,
+                        history_limit=history_limit,
+                        prediction_count=args.prediction_count,
+                        strategy="pair_weighted",
+                        seed=seed,
+                        pair_config=pair_config,
+                        triple_config=triple_config,
+                        ema_config=ema_config,
+                        selector_max_overlap=args.selector_max_overlap,
+                        selector_min_jaccard_distance=args.selector_min_jaccard_distance,
+                        selector_candidate_pool_size=args.selector_candidate_pool_size,
+                        selector_diversity_weight=args.selector_diversity_weight,
+                    )
+                    triple_result = _evaluate_once(
+                        rows=rows,
+                        lottery_type=lottery_type,
+                        target_draw_no=target_draw_no,
+                        history_limit=history_limit,
+                        prediction_count=args.prediction_count,
+                        strategy="triple_weighted",
+                        seed=seed,
+                        pair_config=pair_config,
+                        triple_config=triple_config,
+                        ema_config=ema_config,
+                        selector_max_overlap=args.selector_max_overlap,
+                        selector_min_jaccard_distance=args.selector_min_jaccard_distance,
+                        selector_candidate_pool_size=args.selector_candidate_pool_size,
+                        selector_diversity_weight=args.selector_diversity_weight,
+                    )
+                    comparisons.append(
+                        {
+                            "target_draw_no": target_draw_no,
+                            "history_limit": history_limit,
+                            "seed": seed,
+                            "pair_expected_value_per_ticket": pair_result["expected_value_per_ticket"],
+                            "triple_expected_value_per_ticket": triple_result["expected_value_per_ticket"],
+                        }
+                    )
+                    holdout_results.extend([pair_result, triple_result])
+
+        _print_triplet_holdout_summary(comparisons)
+
+        if args.output_jsonl:
+            _write_jsonl(args.output_jsonl, holdout_results)
+            print()
+            print(f"output_jsonl: {args.output_jsonl}")
+        return
 
     for target_draw_no in target_draws:
         for history_limit in history_limits:
@@ -848,6 +1441,13 @@ def main() -> None:
                     prediction_count=args.prediction_count,
                     strategy=args.strategy,
                     seed=seed,
+                    pair_config=pair_config,
+                    triple_config=triple_config,
+                    ema_config=ema_config,
+                    selector_max_overlap=args.selector_max_overlap,
+                    selector_min_jaccard_distance=args.selector_min_jaccard_distance,
+                    selector_candidate_pool_size=args.selector_candidate_pool_size,
+                    selector_diversity_weight=args.selector_diversity_weight,
                 )
                 results.append(result)
 

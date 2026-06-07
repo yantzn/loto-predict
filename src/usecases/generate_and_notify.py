@@ -55,10 +55,11 @@ class GenerateAndNotifyUseCase:
         execution_id: str | None = None,
         latest_draw_no: int | None = None,
         latest_draw_date: str | None = None,
-        strategy: str = "mixed",
+        strategy: str | None = None,
         seed: int | None = None,
     ) -> dict[str, object]:
         normalized_lottery_type = str(lottery_type).strip().lower()
+        resolved_strategy = self._resolve_strategy(normalized_lottery_type, strategy)
 
         if normalized_lottery_type not in {"loto6", "loto7"}:
             raise ValueError("lottery_type must be loto6 or loto7")
@@ -112,9 +113,10 @@ class GenerateAndNotifyUseCase:
                 number_scores=number_scores,
                 lottery_type=normalized_lottery_type,
                 prediction_count=prediction_count,
-                strategy=strategy,
+                strategy=resolved_strategy,
                 seed=seed,
                 bonus_scores=bonus_scores,
+                history=draws,
             )
 
             message = self._build_message(
@@ -122,7 +124,7 @@ class GenerateAndNotifyUseCase:
                 draw_no=target_draw_no,
                 history_count=len(history_rows),
                 predictions=predictions,
-                strategy=strategy,
+                strategy=resolved_strategy,
             )
 
             if notify_enabled:
@@ -139,7 +141,7 @@ class GenerateAndNotifyUseCase:
                 "status": "SUCCESS" if notify_enabled else "DRY_RUN",
                 "latest_draw_no": target_draw_no,
                 "draw_date": resolved_draw_date,
-                "strategy": strategy,
+                "strategy": resolved_strategy,
                 "seed": seed,
                 "score_weights": {
                     "frequency": tuned.weights.frequency,
@@ -160,7 +162,7 @@ class GenerateAndNotifyUseCase:
                 normalized_lottery_type,
                 history_limit,
                 len(predictions),
-                strategy,
+                resolved_strategy,
                 tuned.score,
                 tuned.evaluated_rounds,
             )
@@ -173,7 +175,7 @@ class GenerateAndNotifyUseCase:
                 "message": message,
                 "latest_draw_no": target_draw_no,
                 "latest_draw_date": resolved_draw_date,
-                "strategy": strategy,
+                "strategy": resolved_strategy,
                 "seed": seed,
                 "score_weights": {
                     "frequency": tuned.weights.frequency,
@@ -193,10 +195,17 @@ class GenerateAndNotifyUseCase:
                 execution_id,
                 normalized_lottery_type,
                 self._latest_draw_no(history_rows),
-                strategy,
+                resolved_strategy,
                 str(exc),
             )
             raise
+
+    def _resolve_strategy(self, lottery_type: str, strategy: str | None) -> str:
+        if strategy:
+            return str(strategy).strip().lower()
+        if lottery_type == "loto7":
+            return "mixed_v3"
+        return "default"
 
     def _latest_draw_no(self, history_rows: list[dict[str, object]]) -> int | None:
         if not history_rows:

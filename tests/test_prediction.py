@@ -61,6 +61,37 @@ def test_generate_predictions_loto7_pick_count_is_seven() -> None:
     assert all(len(set(prediction)) == 7 for prediction in predictions)
 
 
+def test_generate_predictions_loto6_default_uses_gap_repair_on_fifth_ticket() -> None:
+    history = [
+        [
+            ((draw + offset * 5) % 43) + 1
+            for offset in range(6)
+        ]
+        for draw in range(120, 0, -1)
+    ]
+    scores = [(number, float(44 - number)) for number in range(1, 44)]
+
+    predictions1 = generate_predictions(
+        number_scores=scores,
+        lottery_type="loto6",
+        prediction_count=5,
+        seed=100,
+        history=history,
+    )
+    predictions2 = generate_predictions(
+        number_scores=scores,
+        lottery_type="loto6",
+        prediction_count=5,
+        seed=101,
+        history=history,
+    )
+
+    assert predictions1[0] == predictions2[0]
+    assert predictions1 != predictions2
+    assert len({tuple(sorted(prediction)) for prediction in predictions1}) == 5
+    assert len({tuple(sorted(prediction)) for prediction in predictions2}) == 5
+
+
 def test_generate_predictions_uses_score_priority_order() -> None:
     score_map = {1: 100.0, 2: 90.0, 3: 80.0, 4: 70.0, 5: 60.0, 6: 50.0}
     predictions = generate_predictions(
