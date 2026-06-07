@@ -1,5 +1,19 @@
 # prediction strategy
 
+## mixed_loto6
+
+`mixed_loto6` はロト6向けの5口strategyです。ロト7向けの `mixed_v3` をそのまま流用せず、ロト6の本数字6個・ボーナス1個の性質に合わせて、頻度、直近傾向、未出現間隔、組合せ補正、5口間の重複抑制を軽く組み合わせます。
+
+profileは以下の5つです。
+
+- `l6_hot_100_core`: 100回窓を主軸にした本線hot profile
+- `l6_balanced_150`: 150回窓を使う安定枠
+- `l6_recent_50`: 50回窓と直近30回を重視する短期傾向枠
+- `l6_gap_repair`: 未出現間隔を補正し、0頻度数字を完全排除しない枠
+- `l6_diverse_explore`: 他4口と重複しにくい探索枠
+
+LINE通知のロト6予想は、明示strategyが指定されない場合 `mixed_loto6` を使います。過去データ上の参考評価であり、当選保証ではありません。
+
 ## mixed_v3
 
 `mixed_v3` は `mixed_v2` を壊さずに追加したロト7向け strategy です。

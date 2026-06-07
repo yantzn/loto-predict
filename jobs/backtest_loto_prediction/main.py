@@ -24,6 +24,10 @@ from src.domain.statistics import (
     calculate_main_number_scores,
 )
 from src.domain.strategies.ema_recency import EmaRecencyConfig
+from src.domain.strategies.mixed_loto6 import (
+    MIXED_LOTO6_PROFILES,
+    PROFILE_ROLES as LOTO6_PROFILE_ROLES,
+)
 from src.domain.strategies.mixed_v2 import build_lane3_pair_weighted_scores
 from src.domain.strategies.mixed_v3 import (
     MIXED_V3_PROFILES,
@@ -69,6 +73,11 @@ LOTO7_PROFILE_BY_TICKET_NO_MIXED_V2 = {
 LOTO7_PROFILE_BY_TICKET_NO_MIXED_V3 = {
     index: profile
     for index, profile in enumerate(MIXED_V3_PROFILES, start=1)
+}
+
+LOTO6_PROFILE_BY_TICKET_NO_MIXED = {
+    index: profile
+    for index, profile in enumerate(MIXED_LOTO6_PROFILES, start=1)
 }
 
 
@@ -456,6 +465,20 @@ def _score_breakdown_for_ticket(
             breakdown["pair"] = 0.0
             breakdown["triple"] = 0.0
 
+    if strategy == "mixed_loto6":
+        # Keep LOTO6 JSONL trace compatible with the LOTO7 strategy metadata.
+        # Generation-time profile scoring lives in mixed_loto6.py; this lightweight
+        # trace exposes the comparable high-level components without rerunning the
+        # candidate search for every ticket.
+        breakdown["primary_frequency"] = breakdown["base"]
+        breakdown["secondary_frequency"] = breakdown["base"]
+        breakdown["recent_frequency"] = breakdown["base"]
+        breakdown["long_frequency"] = breakdown["base"]
+        breakdown["gap"] = 0.0
+        breakdown["trend"] = 0.0
+        breakdown["combination_fit"] = 0.0
+        breakdown["ema"] = breakdown["base"]
+
     return breakdown
 
 
@@ -601,6 +624,8 @@ def _evaluate_once(
                 profile_name = f"triple_weighted_ticket_{ticket_no}"
             else:
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO.get(ticket_no, f"profile_{ticket_no}")
+        elif strategy == "mixed_loto6":
+            profile_name = LOTO6_PROFILE_BY_TICKET_NO_MIXED.get(ticket_no, f"l6_ticket_{ticket_no}")
         else:
             profile_name = f"ticket_{ticket_no}"
 
@@ -1005,34 +1030,69 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
             f"{str(result['second_prize_found']).lower():5}"
         )
 
+    lottery_type = str(results[0].get("lottery_type", "loto7")) if results else "loto7"
+    strategy = str(results[0].get("strategy", "")) if results else ""
+    if lottery_type == "loto6":
+        comparison_hint = {
+            "strategy_comparison_hint": {
+                "baseline_strategy": "default",
+                "candidate_strategy": strategy or "mixed_loto6",
+                "primary_metric": "avg_best_score",
+                "secondary_metrics": [
+                    "third_prize_count",
+                    "fourth_prize_count",
+                    "fifth_prize_count",
+                    "score_stddev",
+                ],
+                "adoption_rule": (
+                    "Adopt mixed_loto6 only if it improves upper-prize counts or "
+                    "avg_best_score without relying on a single seed or draw."
+                ),
+            }
+        }
+        adoption = {
+            "adoption_recommendation": {
+                "candidate_strategy": strategy or "mixed_loto6",
+                "baseline_strategy": "default",
+                "should_adopt": False,
+                "reason": "Use validation and holdout comparison before treating mixed_loto6 as production default.",
+            }
+        }
+    else:
+        comparison_hint = {
+            "strategy_comparison_hint": {
+                "baseline_strategy": "mixed_v2",
+                "candidate_strategy": "mixed_v3",
+                "primary_metric": "avg_best_score",
+                "secondary_metrics": [
+                    "third_prize_count",
+                    "fourth_prize_count",
+                    "hit4_or_more_rate",
+                    "hit5_or_more_rate",
+                    "second_prize_runs",
+                ],
+                "adoption_rule": (
+                    "Adopt mixed_v3 only if it improves 3rd/4th prize counts or "
+                    "avg_best_score without eliminating bonus-aware upside."
+                ),
+            }
+        }
+        adoption = {
+            "adoption_recommendation": {
+                "candidate_strategy": "mixed_v3",
+                "baseline_strategy": "mixed_v2_fix",
+                "should_adopt": False,
+                "reason": "Adopt only after 600-674 validation and 650-679 validation improve key metrics.",
+            }
+        }
+
     print()
     print("strategy_comparison_hint:")
-    print(json.dumps({
-      "strategy_comparison_hint": {
-        "baseline_strategy": "mixed_v2",
-        "candidate_strategy": "mixed_v3",
-        "primary_metric": "avg_best_score",
-        "secondary_metrics": [
-          "third_prize_count",
-          "fourth_prize_count",
-          "hit4_or_more_rate",
-          "hit5_or_more_rate",
-          "second_prize_runs"
-        ],
-        "adoption_rule": "Adopt mixed_v3 only if it improves 3rd/4th prize counts or avg_best_score without eliminating bonus-aware upside."
-      }
-    }, ensure_ascii=False, indent=2))
+    print(json.dumps(comparison_hint, ensure_ascii=False, indent=2))
 
     print()
     print("adoption_recommendation:")
-    print(json.dumps({
-      "adoption_recommendation": {
-        "candidate_strategy": "mixed_v3",
-        "baseline_strategy": "mixed_v2_fix",
-        "should_adopt": False,
-        "reason": "Adopt only after 600-674 validation and 650-679 validation improve key metrics."
-      }
-    }, ensure_ascii=False, indent=2))
+    print(json.dumps(adoption, ensure_ascii=False, indent=2))
 
 
 def _print_triplet_holdout_summary(comparisons: list[dict[str, Any]]) -> None:
@@ -1101,8 +1161,11 @@ def _write_jsonl(path: str, results: list[dict[str, Any]]) -> None:
                         f"{result['strategy']}:{ticket['profile_name']}:"
                         f"history{result['history_limit']}:draw{result['target_draw_no']}"
                     ),
-                    "profile_learning_candidate": result["strategy"] in {"mixed_v2", "mixed_v3"},
-                    "profile_role": PROFILE_ROLES.get(ticket["profile_name"], ""),
+                    "profile_learning_candidate": result["strategy"] in {"mixed_loto6", "mixed_v2", "mixed_v3"},
+                    "profile_role": {
+                        **LOTO6_PROFILE_ROLES,
+                        **PROFILE_ROLES,
+                    }.get(ticket["profile_name"], ""),
                     "seed_optimization_used": False,
                     "target_draw": result["target_draw_no"],
                     "history_limit": result["history_limit"],
@@ -1166,9 +1229,12 @@ def main() -> None:
     parser.add_argument("--prediction-count", type=int, default=5)
     parser.add_argument(
         "--strategy",
-        choices=["mixed", "mixed_v2", "mixed_v3", "triple_weighted"],
+        choices=["default", "mixed", "mixed_loto6", "mixed_v2", "mixed_v3", "triple_weighted"],
         default="mixed",
-        help="Prediction strategy to use. Available: mixed, mixed_v2, mixed_v3, triple_weighted",
+        help=(
+            "Prediction strategy to use. Available: default, mixed, mixed_loto6, "
+            "mixed_v2, mixed_v3, triple_weighted"
+        ),
     )
 
     parser.add_argument("--pair-weight", type=float, default=1.0)
@@ -1220,7 +1286,13 @@ def main() -> None:
             "Specify one of --target-draw-no, --target-draws, or --target-draw-from/--target-draw-to."
         )
 
-    if lottery_type == "loto6" and args.strategy in {"second_prize_oriented", "mixed", "pair_weighted", "ema_recency"}:
+    if lottery_type == "loto6" and args.strategy in {
+        "mixed_v2",
+        "mixed_v3",
+        "triple_weighted",
+        "pair_weighted",
+        "ema_recency",
+    }:
         print("warning: strategy is for loto7 only. fallback to default for loto6.")
         args.strategy = "default"
 
@@ -1238,6 +1310,27 @@ def main() -> None:
         ),
         lottery_type,
     )
+
+    existing_draw_nos = {int(row["draw_no"]) for row in rows}
+    requested_target_draws = list(target_draws)
+    missing_target_draws = [
+        draw_no
+        for draw_no in requested_target_draws
+        if draw_no not in existing_draw_nos
+    ]
+    target_draws = [
+        draw_no
+        for draw_no in requested_target_draws
+        if draw_no in existing_draw_nos
+    ]
+    if not target_draws:
+        raise ValueError("no requested target draws exist in the input history")
+    if missing_target_draws:
+        print(
+            "missing target draws skipped: "
+            f"count={len(missing_target_draws)} "
+            f"first={missing_target_draws[:20]}"
+        )
 
     source = "jsonl" if args.input_jsonl else "bigquery"
     batch_mode = len(target_draws) > 1 or len(history_limits) > 1 or len(seeds) > 1

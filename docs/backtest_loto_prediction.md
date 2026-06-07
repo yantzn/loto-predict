@@ -1,5 +1,15 @@
 # backtest_loto_prediction
 
+## LOTO6 mixed_loto6 validation
+
+ロト6は `mixed_loto6` で検証できます。ロト7向け `mixed_v3` とは分け、100回窓を主軸、150回窓を安定補助、50回窓を探索枠として扱います。
+
+```powershell
+python jobs/backtest_loto_prediction/main.py --lottery-type loto6 --target-draw-from 1900 --target-draw-to 9999 --history-limits 50,100,150,200 --prediction-count 5 --seed-from 1 --seed-to 100 --input-jsonl ./local_storage/imported/loto6_history.jsonl --output-jsonl ./local_storage/backtest/loto6_mixed_loto6_validation.jsonl --strategy mixed_loto6
+```
+
+`target-draw-to=9999` を指定した場合、存在しない回はmissing扱いでsummaryに記録されます。validation範囲とholdout範囲を分け、単一seedや単一drawの上振れを勝ち筋と誤認しないようにしてください。
+
 `jobs/backtest_loto_prediction` は、ロト予想 strategy を過去データ上で比較するためのCLIです。
 これは当選保証ではなく、過去データ上の参考評価として扱います。
 

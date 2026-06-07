@@ -13,6 +13,7 @@ from src.domain.selection.diversity import (
     select_diverse_tickets,
 )
 from src.domain.strategies.ema_recency import EmaRecencyConfig, rank_ema_recency_candidates
+from src.domain.strategies.mixed_loto6 import MixedLoto6Strategy, build_default_mixed_loto6_config
 from src.domain.strategies.mixed_v2 import MixedStrategyV2, build_default_mixed_v2_config
 from src.domain.strategies.mixed_v3 import MixedStrategyV3, build_default_mixed_v3_config
 from src.domain.strategies.pair_weighted import rank_pair_weighted_candidates
@@ -311,6 +312,92 @@ def _build_strategy_tickets(
     return [ticket for ticket in candidates if len(ticket) == pick_count]
 
 
+def _gap_scores_for_history(
+    *,
+    history: list[list[int]],
+    number_min: int,
+    number_max: int,
+) -> dict[int, float]:
+    # LOTO6 defaultの5口目だけに使う軽いgap補正。未出現間隔を0-1へ正規化し、
+    # 低頻度数字を完全に捨てない探索要素として扱う。
+    if not history:
+        return {number: 0.0 for number in range(number_min, number_max + 1)}
+
+    max_gap = max(1, len(history))
+    gaps = {number: max_gap for number in range(number_min, number_max + 1)}
+    for index, draw in enumerate(history):
+        for value in draw:
+            number = int(value)
+            if number_min <= number <= number_max and gaps[number] == max_gap:
+                gaps[number] = index
+
+    return {
+        number: min(1.0, gap / max_gap)
+        for number, gap in gaps.items()
+    }
+
+
+def _build_loto6_gap_repair_ticket(
+    *,
+    base_weights: dict[int, float],
+    history: list[list[int]],
+    seen: set[tuple[int, ...]],
+    rng: random.Random,
+) -> list[int] | None:
+    # 本線defaultを壊さないため、baseを強めに残しつつgapを薄く混ぜる。
+    # 5口目だけseed差を持たせ、同じseedでは再現する探索枠にする。
+    number_min, number_max, pick_count = _lottery_spec("loto6")
+    gap_scores = _gap_scores_for_history(
+        history=history,
+        number_min=number_min,
+        number_max=number_max,
+    )
+    max_base = max(base_weights.values(), default=1.0) or 1.0
+    blended = {
+        number: (
+            (base_weights.get(number, 1.0) / max_base) * 0.68
+            + gap_scores.get(number, 0.0) * 0.32
+            + 0.01
+        )
+        for number in range(number_min, number_max + 1)
+    }
+    ranked = _rank_numbers_by_weight(blended)
+    gap_ranked = sorted(
+        range(number_min, number_max + 1),
+        key=lambda number: (-gap_scores.get(number, 0.0), -base_weights.get(number, 1.0), number),
+    )
+    pool = list(dict.fromkeys(ranked[:18] + gap_ranked[:14]))
+
+    best_ticket: list[int] | None = None
+    best_score = -1.0
+    for _ in range(40):
+        sampled = _weighted_sample_without_replacement(
+            population=pool,
+            weights=blended,
+            sample_size=pick_count,
+            rng=rng,
+        )
+        key = tuple(sorted(sampled))
+        if key in seen:
+            continue
+        score = sum(blended[number] for number in sampled)
+        if score > best_score:
+            best_score = score
+            best_ticket = sampled
+
+    if best_ticket is None:
+        for start in range(0, len(ranked) - pick_count + 1):
+            candidate = ranked[start : start + pick_count]
+            if tuple(sorted(candidate)) not in seen:
+                best_ticket = candidate
+                break
+
+    if best_ticket is None:
+        return None
+
+    return _order_by_score(best_ticket, blended)
+
+
 def _generate_default_predictions(
     number_scores: list[tuple[int, float]],
     lottery_type: str,
@@ -318,6 +405,7 @@ def _generate_default_predictions(
     rng: random.Random | None = None,
     seed: int | None = None,
     excluded_combinations: set[tuple[int, ...]] | None = None,
+    history: list[list[int]] | None = None,
 ) -> list[list[int]]:
     # 5 つの戦略をまず試し、足りなければランダム抽選で補う。
     number_min, number_max, pick_count = _lottery_spec(lottery_type)
@@ -349,9 +437,29 @@ def _generate_default_predictions(
     seen = set(excluded_combinations or set())
     number_usage: dict[int, int] = {}
 
-    for strategy_ticket in _build_strategy_tickets(ranked_numbers, pick_count):
+    strategy_tickets = _build_strategy_tickets(ranked_numbers, pick_count)
+    normalized_lottery_type = str(lottery_type).strip().lower()
+
+    gap_repair_added = False
+
+    for strategy_ticket in strategy_tickets:
         if len(predictions) >= prediction_count:
             break
+        if (
+            normalized_lottery_type == "loto6"
+            and history
+            and not gap_repair_added
+            and len(predictions) >= 4
+        ):
+            gap_ticket = _build_loto6_gap_repair_ticket(
+                base_weights=base_weights,
+                history=history,
+                seen=seen,
+                rng=random_source,
+            )
+            if gap_ticket is not None:
+                strategy_ticket = gap_ticket
+                gap_repair_added = True
 
         ordered = _order_by_score(strategy_ticket, base_weights)
         key = tuple(sorted(ordered))
@@ -364,6 +472,27 @@ def _generate_default_predictions(
 
         for number in ordered:
             number_usage[number] = number_usage.get(number, 0) + 1
+
+    if (
+        normalized_lottery_type == "loto6"
+        and history
+        and not gap_repair_added
+        and len(predictions) == prediction_count - 1
+    ):
+        gap_ticket = _build_loto6_gap_repair_ticket(
+            base_weights=base_weights,
+            history=history,
+            seen=seen,
+            rng=random_source,
+        )
+        if gap_ticket is not None:
+            ordered = _order_by_score(gap_ticket, base_weights)
+            key = tuple(sorted(ordered))
+            if key not in seen:
+                seen.add(key)
+                predictions.append(ordered)
+                for number in ordered:
+                    number_usage[number] = number_usage.get(number, 0) + 1
 
     max_attempts = max(300, prediction_count * 300)
     attempts = 0
@@ -657,6 +786,7 @@ def _generate_predictions_primitive(
             prediction_count=prediction_count,
             rng=rng,
             seed=seed,
+            history=history,
         )
 
     if normalized_strategy == "mixed":
@@ -667,6 +797,7 @@ def _generate_predictions_primitive(
                 prediction_count=prediction_count,
                 rng=rng,
                 seed=seed,
+                history=history,
             )
 
         return generate_loto7_second_prize_oriented_predictions(
@@ -676,6 +807,23 @@ def _generate_predictions_primitive(
             rng=rng,
             seed=None if seed is None else seed + 10_000,
             excluded_combinations=None,
+        )
+
+    if normalized_strategy == "mixed_loto6":
+        if normalized_lottery_type != "loto6":
+            raise ValueError("mixed_loto6 is only supported for loto6")
+        if history is None:
+            raise ValueError("history is required for mixed_loto6")
+
+        config = build_default_mixed_loto6_config()
+        strategy_impl = MixedLoto6Strategy(config)
+        return strategy_impl.generate_predictions(
+            history=history,
+            prediction_count=prediction_count,
+            seed=seed or 0,
+            number_scores=number_scores,
+            target_draw=target_draw,
+            history_limit=history_limit,
         )
 
     if normalized_strategy == "pair_weighted":
@@ -762,7 +910,8 @@ def _generate_predictions_primitive(
 
     raise ValueError(
         f"Unknown strategy: {normalized_strategy}. Supported strategies are: "
-        "default, mixed, mixed_v2, mixed_v3, pair_weighted, ema_recency, triple_weighted."
+        "default, mixed, mixed_loto6, mixed_v2, mixed_v3, pair_weighted, "
+        "ema_recency, triple_weighted."
     )
 
 

@@ -99,6 +99,33 @@ def test_execute_defaults_loto7_line_predictions_to_mixed_v3(monkeypatch) -> Non
     assert "戦略: mixed_v3" in line_client.messages[0][1]
 
 
+def test_execute_keeps_loto6_default_strategy_until_mixed_loto6_wins_validation(monkeypatch) -> None:
+    repo = _FakeRepository(_history_rows_loto6())
+    line_client = _FakeLineClient()
+    usecase = GenerateAndNotifyUseCase(repository=repo, line_client=line_client, logger=logging.getLogger(__name__))
+    captured: dict[str, object] = {}
+
+    def fake_loto6_predictions(**kwargs):
+        captured.update(kwargs)
+        return [[1, 2, 3, 4, 5, 6] for _ in range(kwargs["prediction_count"])]
+
+    monkeypatch.setattr("src.usecases.generate_and_notify.generate_predictions", fake_loto6_predictions)
+
+    result = usecase.execute(
+        lottery_type="loto6",
+        history_limit=5,
+        prediction_count=5,
+        line_user_id="user-1",
+        notify_enabled=True,
+        execution_id="exec-loto6",
+    )
+
+    assert captured["strategy"] == "default"
+    assert result["strategy"] == "default"
+    assert repo.saved_payloads[0]["strategy"] == "default"
+    assert "default" in line_client.messages[0][1]
+
+
 def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> None:
     # このテストは UseCase のオーケストレーション責務を検証する。
     # prediction_runs のスキーマ変換詳細(1口1行への展開)は repository 側テストで担保する。

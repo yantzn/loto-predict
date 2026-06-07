@@ -4,12 +4,14 @@ backtest CLIの--strategy choicesにmixed/mixed_v2/mixed_v3/triple_weightedが�
 """
 
 import subprocess
+import sys
+
 import pytest
 
 def test_cli_exposes_mixed_variants():
     # Run the main CLI with --help to capture the choices
     result = subprocess.run(
-        ["python", "jobs/backtest_loto_prediction/main.py", "--help"],
+        [sys.executable, "jobs/backtest_loto_prediction/main.py", "--help"],
         capture_output=True,
         text=True,
     )
@@ -18,11 +20,14 @@ def test_cli_exposes_mixed_variants():
     help_text = result.stdout
     
     # Ensure the choices are listed
-    assert "{mixed,mixed_v2,mixed_v3,triple_weighted}" in help_text or "mixed, mixed_v2, mixed_v3, triple_weighted" in help_text
+    assert "mixed_loto6" in help_text
+    assert "mixed_v2" in help_text
+    assert "mixed_v3" in help_text
+    assert "triple_weighted" in help_text
     
     # Ensure invalid choice is rejected
     result_invalid = subprocess.run(
-        ["python", "jobs/backtest_loto_prediction/main.py", "--lottery-type", "loto7", "--strategy", "invalid"],
+        [sys.executable, "jobs/backtest_loto_prediction/main.py", "--lottery-type", "loto7", "--strategy", "invalid"],
         capture_output=True,
         text=True,
     )
