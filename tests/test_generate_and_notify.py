@@ -39,9 +39,64 @@ def _history_rows_loto6() -> list[dict[str, object]]:
     ]
 
 
-def _fake_predictions(*, number_scores, lottery_type, prediction_count, rng=None, seed=None):
-    del number_scores, lottery_type, rng, seed
+def _history_rows_loto7() -> list[dict[str, object]]:
+    return [
+        {
+            "draw_no": 679 - index,
+            "n1": 1,
+            "n2": 2,
+            "n3": 3,
+            "n4": 4,
+            "n5": 5,
+            "n6": 6,
+            "n7": 7,
+            "b1": 8,
+            "b2": 9,
+        }
+        for index in range(120)
+    ]
+
+
+def _fake_predictions(
+    *,
+    number_scores,
+    lottery_type,
+    prediction_count,
+    rng=None,
+    seed=None,
+    strategy="mixed",
+    bonus_scores=None,
+    history=None,
+):
+    del number_scores, lottery_type, rng, seed, strategy, bonus_scores, history
     return [[1, 2, 3, 4, 5, 6] for _ in range(prediction_count)]
+
+
+def test_execute_defaults_loto7_line_predictions_to_mixed_v3(monkeypatch) -> None:
+    repo = _FakeRepository(_history_rows_loto7())
+    line_client = _FakeLineClient()
+    usecase = GenerateAndNotifyUseCase(repository=repo, line_client=line_client, logger=logging.getLogger(__name__))
+    captured: dict[str, object] = {}
+
+    def fake_loto7_predictions(**kwargs):
+        captured.update(kwargs)
+        return [[1, 2, 3, 4, 5, 6, 7] for _ in range(kwargs["prediction_count"])]
+
+    monkeypatch.setattr("src.usecases.generate_and_notify.generate_predictions", fake_loto7_predictions)
+
+    result = usecase.execute(
+        lottery_type="loto7",
+        history_limit=100,
+        prediction_count=5,
+        line_user_id="user-1",
+        notify_enabled=True,
+        execution_id="exec-loto7",
+    )
+
+    assert captured["strategy"] == "mixed_v3"
+    assert result["strategy"] == "mixed_v3"
+    assert repo.saved_payloads[0]["strategy"] == "mixed_v3"
+    assert "戦略: mixed_v3" in line_client.messages[0][1]
 
 
 def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> None:
@@ -64,11 +119,11 @@ def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> 
 
     assert repo.fetch_calls == [("loto6", 5)]
     assert result["prediction_count"] == 5
-    assert result["latest_draw_no"] == 1005
+    assert result["latest_draw_no"] == 1006
     assert len(line_client.messages) == 1
     assert line_client.messages[0][0] == "user-1"
     assert "LOTO6 予想" in line_client.messages[0][1]
-    assert "回号: 第1005回" in line_client.messages[0][1]
+    assert "回号: 第1006回" in line_client.messages[0][1]
     payload = repo.saved_payloads[0]
     assert payload["execution_id"] == "exec-1"
     assert payload["predictions"] == [[1, 2, 3, 4, 5, 6]] * 5
@@ -94,7 +149,7 @@ def test_execute_skips_line_send_in_local_dry_run(monkeypatch) -> None:
 
     assert repo.fetch_calls == [("loto6", 5)]
     assert result["prediction_count"] == 5
-    assert result["latest_draw_no"] == 1005
+    assert result["latest_draw_no"] == 1006
     assert line_client.messages == []
     payload = repo.saved_payloads[0]
     assert payload["execution_id"] == "exec-2"

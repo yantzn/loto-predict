@@ -1,0 +1,9 @@
+lint.ignore = [
+    # The current repository keeps several function-entry modules with sys.path
+    # bootstrapping and pre-existing unused imports/locals. Keep ruff focused on
+    # runtime-impacting checks until those files are cleaned up separately.
+    "E402",
+    "F401",
+    "F811",
+    "F841",
+]

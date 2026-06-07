@@ -1,0 +1,46 @@
+lottery_type: loto7
+baseline_strategy: mixed
+input_jsonl: ./local_storage/imported/loto7_history.jsonl
+output_root: ./local_storage/backtest/experiments
+report_root: ./local_storage/backtest/reports
+bootstrap_samples: 2000
+history_limits:
+  - 100
+prediction_count: 5
+seed_from: 1
+seed_to: 300
+target_draw_ranges:
+  - name: 600-612
+    from: 600
+    to: 612
+  - name: 613-674
+    from: 613
+    to: 674
+  - name: 600-674
+    from: 600
+    to: 674
+strategies:
+  - mixed
+  - pair_weighted
+  - ema_recency
+  - mixed_plus_diversity
+  - mixed_v2
+strategy_parameters:
+  pair_weighted:
+    pair_weight: 1.0
+    pair_laplace: 1.0
+    pair_shrink_k: 5.0
+    pair_decay: 0.0
+  ema_recency:
+    ema_alpha_short: 0.20
+    ema_alpha_mid: 0.10
+    ema_alpha_long: 0.05
+    ema_short_weight: 0.45
+    ema_mid_weight: 0.35
+    ema_long_weight: 0.20
+    ema_include_bonus: true
+  mixed_plus_diversity:
+    selector_max_overlap: 4
+    selector_min_jaccard_distance: 0.43
+    selector_candidate_pool_size: 20
+    selector_diversity_weight: 0.25

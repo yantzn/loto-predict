@@ -3,7 +3,23 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from itertools import islice
+from itertools import combinations, islice
+
+from src.domain.scorers.pair_cooccurrence import PairConfig
+from src.domain.selection.diversity import (
+    TicketCandidate,
+    jaccard_similarity,
+    overlap_count,
+    select_diverse_tickets,
+)
+from src.domain.strategies.ema_recency import EmaRecencyConfig, rank_ema_recency_candidates
+from src.domain.strategies.mixed_v2 import MixedStrategyV2, build_default_mixed_v2_config
+from src.domain.strategies.mixed_v3 import MixedStrategyV3, build_default_mixed_v3_config
+from src.domain.strategies.pair_weighted import rank_pair_weighted_candidates
+from src.domain.strategies.triple_weighted import (
+    TripleWeightedConfig,
+    rank_triple_weighted_candidates,
+)
 
 
 """予想番号生成の中核ロジックをまとめたドメイン層。"""
@@ -612,7 +628,11 @@ def generate_loto7_second_prize_oriented_predictions(
     return predictions
 
 
-def generate_predictions(
+def _score_ticket(ticket: list[int], number_scores: dict[int, float]) -> float:
+    return sum(number_scores.get(number, 0.0) for number in ticket)
+
+
+def _generate_predictions_primitive(
     number_scores: list[tuple[int, float]],
     lottery_type: str,
     prediction_count: int,
@@ -620,8 +640,13 @@ def generate_predictions(
     seed: int | None = None,
     strategy: str = "default",
     bonus_scores: list[tuple[int, float]] | None = None,
+    history: list[list[int]] | None = None,
+    pair_config: PairConfig | None = None,
+    triple_config: TripleWeightedConfig | None = None,
+    ema_config: EmaRecencyConfig | None = None,
+    target_draw: int = 0,
+    history_limit: int = 0,
 ) -> list[list[int]]:
-    # 呼び出し側に対して、default / second_prize_oriented / mixed を統一的に扱う。
     normalized_lottery_type = str(lottery_type).strip().lower()
     normalized_strategy = str(strategy).strip().lower()
 
@@ -629,20 +654,6 @@ def generate_predictions(
         return _generate_default_predictions(
             number_scores=number_scores,
             lottery_type=normalized_lottery_type,
-            prediction_count=prediction_count,
-            rng=rng,
-            seed=seed,
-        )
-
-    if normalized_strategy == "second_prize_oriented":
-        if normalized_lottery_type != "loto7":
-            raise ValueError("second_prize_oriented is only supported for loto7")
-        if bonus_scores is None:
-            raise ValueError("bonus_scores is required for second_prize_oriented")
-
-        return generate_loto7_second_prize_oriented_predictions(
-            main_scores=number_scores,
-            bonus_scores=bonus_scores,
             prediction_count=prediction_count,
             rng=rng,
             seed=seed,
@@ -667,4 +678,242 @@ def generate_predictions(
             excluded_combinations=None,
         )
 
-    raise ValueError(f"unsupported prediction strategy: {strategy}")
+    if normalized_strategy == "pair_weighted":
+        if normalized_lottery_type != "loto7":
+            raise ValueError("pair_weighted is only supported for loto7")
+        if history is None:
+            raise ValueError("history is required for pair_weighted strategy")
+
+        return rank_pair_weighted_candidates(
+            history=history,
+            prediction_count=prediction_count,
+            seed=seed or 0,
+            config=pair_config or PairConfig(),
+        )
+
+    if normalized_strategy == "ema_recency":
+        if normalized_lottery_type != "loto7":
+            raise ValueError("ema_recency is only supported for loto7")
+        if history is None:
+            raise ValueError("history is required for ema_recency strategy")
+
+        return rank_ema_recency_candidates(
+            history=history,
+            prediction_count=prediction_count,
+            seed=seed or 0,
+            config=ema_config or EmaRecencyConfig(),
+        )
+
+    if normalized_strategy == "mixed_v2":
+        if normalized_lottery_type != "loto7":
+            raise ValueError("mixed_v2 is only supported for loto7")
+        if bonus_scores is None:
+            raise ValueError("bonus_scores is required for mixed_v2")
+        if history is None:
+            raise ValueError("history is required for mixed_v2")
+
+        config = build_default_mixed_v2_config()
+        strategy_impl = MixedStrategyV2(config)
+        return strategy_impl.generate_predictions(
+            history=history,
+            prediction_count=prediction_count,
+            seed=seed or 0,
+            number_scores=number_scores,
+            bonus_scores=bonus_scores,
+            target_draw=target_draw,
+            history_limit=history_limit,
+        )
+
+    if normalized_strategy == "mixed_v3":
+        if normalized_lottery_type != "loto7":
+            raise ValueError("mixed_v3 is only supported for loto7")
+        if bonus_scores is None:
+            raise ValueError("bonus_scores is required for mixed_v3")
+        if history is None:
+            raise ValueError("history is required for mixed_v3")
+
+        config = build_default_mixed_v3_config()
+        strategy_impl = MixedStrategyV3(config)
+        return strategy_impl.generate_predictions(
+            history=history,
+            prediction_count=prediction_count,
+            seed=seed or 0,
+            number_scores=number_scores,
+            bonus_scores=bonus_scores,
+            target_draw=target_draw,
+            history_limit=history_limit,
+        )
+
+    if normalized_strategy == "triple_weighted":
+        if normalized_lottery_type != "loto7":
+            raise ValueError("triple_weighted is only supported for loto7")
+        if history is None:
+            raise ValueError("history is required for triple_weighted strategy")
+
+        config = triple_config or TripleWeightedConfig()
+        return rank_triple_weighted_candidates(
+            history=history,
+            prediction_count=prediction_count,
+            seed=seed or 0,
+            config=config,
+            target_draw=target_draw,
+            history_limit=history_limit,
+        )
+
+    raise ValueError(
+        f"Unknown strategy: {normalized_strategy}. Supported strategies are: "
+        "default, mixed, mixed_v2, mixed_v3, pair_weighted, ema_recency, triple_weighted."
+    )
+
+
+def _build_candidate_pool(
+    number_scores: list[tuple[int, float]],
+    lottery_type: str,
+    prediction_count: int,
+    seed: int | None,
+    strategy: str,
+    bonus_scores: list[tuple[int, float]] | None,
+    history: list[list[int]] | None,
+    pair_config: PairConfig | None,
+    triple_config: TripleWeightedConfig | None,
+    ema_config: EmaRecencyConfig | None,
+    candidate_pool_size: int,
+    target_draw: int = 0,
+    history_limit: int = 0,
+) -> list[TicketCandidate]:
+    score_map = _normalize_scores(number_scores)
+    pool: list[TicketCandidate] = []
+    seen: set[tuple[int, ...]] = set()
+    seed_base = seed or 0
+    attempts = 0
+    max_attempts = max(10, candidate_pool_size * 2)
+
+    while len(pool) < candidate_pool_size and attempts < max_attempts:
+        batch_seed = seed_base + attempts
+        predictions = _generate_predictions_primitive(
+            number_scores=number_scores,
+            lottery_type=lottery_type,
+            prediction_count=prediction_count,
+            rng=None,
+            seed=batch_seed,
+            strategy=strategy,
+            bonus_scores=bonus_scores,
+            history=history,
+            pair_config=pair_config,
+            triple_config=triple_config,
+            ema_config=ema_config,
+            target_draw=target_draw,
+            history_limit=history_limit,
+        )
+
+        for prediction in predictions:
+            key = tuple(sorted(prediction))
+            if key in seen:
+                continue
+            seen.add(key)
+            pool.append(
+                TicketCandidate(
+                    numbers=list(key),
+                    score=_score_ticket(list(key), score_map),
+                )
+            )
+            if len(pool) >= candidate_pool_size:
+                break
+
+        attempts += 1
+
+    return pool
+
+
+def _compute_diversity_metrics(predictions: list[list[int]]) -> tuple[float, float, int]:
+    if not predictions:
+        return 0.0, 0.0, 0
+
+    pairwise_jaccard: list[float] = []
+    pairwise_overlap: list[int] = []
+    unique_numbers = set()
+
+    for index_a, index_b in combinations(range(len(predictions)), 2):
+        a = predictions[index_a]
+        b = predictions[index_b]
+        similarity = jaccard_similarity(a, b)
+        pairwise_jaccard.append(similarity)
+        pairwise_overlap.append(overlap_count(a, b))
+
+    avg_jaccard = sum(pairwise_jaccard) / len(pairwise_jaccard) if pairwise_jaccard else 0.0
+    avg_overlap = sum(pairwise_overlap) / len(pairwise_overlap) if pairwise_overlap else 0.0
+    for ticket in predictions:
+        unique_numbers.update(ticket)
+
+    return avg_jaccard, avg_overlap, len(unique_numbers)
+
+
+def generate_predictions(
+    number_scores: list[tuple[int, float]],
+    lottery_type: str,
+    prediction_count: int,
+    rng: random.Random | None = None,
+    seed: int | None = None,
+    strategy: str = "default",
+    bonus_scores: list[tuple[int, float]] | None = None,
+    history: list[list[int]] | None = None,
+    pair_config: PairConfig | None = None,
+    triple_config: TripleWeightedConfig | None = None,
+    ema_config: EmaRecencyConfig | None = None,
+    selector_max_overlap: int | None = None,
+    selector_min_jaccard_distance: float | None = None,
+    selector_candidate_pool_size: int | None = None,
+    selector_diversity_weight: float | None = None,
+    target_draw: int = 0,
+    history_limit: int = 0,
+) -> list[list[int]]:
+    predictions = _generate_predictions_primitive(
+        number_scores=number_scores,
+        lottery_type=lottery_type,
+        prediction_count=prediction_count,
+        rng=rng,
+        seed=seed,
+        strategy=strategy,
+        bonus_scores=bonus_scores,
+        history=history,
+        pair_config=pair_config,
+        triple_config=triple_config,
+        ema_config=ema_config,
+        target_draw=target_draw,
+        history_limit=history_limit,
+    )
+
+    if selector_candidate_pool_size is None or selector_candidate_pool_size <= prediction_count:
+        return predictions
+
+    candidate_pool = _build_candidate_pool(
+        number_scores=number_scores,
+        lottery_type=lottery_type,
+        prediction_count=prediction_count,
+        seed=seed,
+        strategy=strategy,
+        bonus_scores=bonus_scores,
+        history=history,
+        pair_config=pair_config,
+        triple_config=triple_config,
+        ema_config=ema_config,
+        candidate_pool_size=selector_candidate_pool_size,
+        target_draw=target_draw,
+        history_limit=history_limit,
+    )
+
+    if not candidate_pool:
+        return predictions
+
+    selected_candidates = select_diverse_tickets(
+        candidates=candidate_pool,
+        prediction_count=prediction_count,
+        max_overlap=selector_max_overlap or 4,
+        min_jaccard_distance=selector_min_jaccard_distance or 0.43,
+        diversity_weight=selector_diversity_weight or 0.25,
+    )
+
+    if len(selected_candidates) != prediction_count:
+        return predictions
+
+    return [candidate.numbers for candidate in selected_candidates]
