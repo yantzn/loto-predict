@@ -55,6 +55,16 @@ def test_registry_contains_mixed_variants():
         history=[[1, 2, 3, 4, 5, 6]] * 10,
     )
 
+    # mixed_v3 for loto6
+    generate_predictions(
+        number_scores=[(i, 1.0) for i in range(1, 44)],
+        lottery_type="loto6",
+        prediction_count=1,
+        strategy="mixed_v3",
+        seed=1,
+        history=[[1, 2, 3, 4, 5, 6]] * 10,
+    )
+
 def test_unknown_strategy_fails_fast():
     number_scores = [(i, 1.0) for i in range(1, 38)]
     

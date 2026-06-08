@@ -203,6 +203,10 @@ class GenerateAndNotifyUseCase:
     def _resolve_strategy(self, lottery_type: str, strategy: str | None) -> str:
         if strategy:
             return str(strategy).strip().lower()
+        # LINE通知は検証済みのv3戦略をデフォルトにします。
+        # ただし手動指定されたstrategyは優先し、バックテストや比較実行の互換性を保ちます。
+        if lottery_type == "loto6":
+            return "mixed_v3"
         if lottery_type == "loto7":
             return "mixed_v3"
         return "default"

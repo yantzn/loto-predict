@@ -13,6 +13,7 @@ from src.domain.selection.diversity import (
     select_diverse_tickets,
 )
 from src.domain.strategies.ema_recency import EmaRecencyConfig, rank_ema_recency_candidates
+from src.domain.strategies.loto6_mixed_v3 import Loto6MixedV3Strategy, build_default_loto6_mixed_v3_config
 from src.domain.strategies.mixed_loto6 import MixedLoto6Strategy, build_default_mixed_loto6_config
 from src.domain.strategies.mixed_v2 import MixedStrategyV2, build_default_mixed_v2_config
 from src.domain.strategies.mixed_v3 import MixedStrategyV3, build_default_mixed_v3_config
@@ -873,8 +874,20 @@ def _generate_predictions_primitive(
         )
 
     if normalized_strategy == "mixed_v3":
+        if normalized_lottery_type == "loto6":
+            if history is None:
+                raise ValueError("history is required for loto6 mixed_v3")
+            config = build_default_loto6_mixed_v3_config()
+            strategy_impl = Loto6MixedV3Strategy(config)
+            return strategy_impl.generate_predictions(
+                history=history,
+                prediction_count=prediction_count,
+                seed=seed or 0,
+                target_draw=target_draw,
+                history_limit=history_limit,
+            )
         if normalized_lottery_type != "loto7":
-            raise ValueError("mixed_v3 is only supported for loto7")
+            raise ValueError("mixed_v3 is only supported for loto6/loto7")
         if bonus_scores is None:
             raise ValueError("bonus_scores is required for mixed_v3")
         if history is None:

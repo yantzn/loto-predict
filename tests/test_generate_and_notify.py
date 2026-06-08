@@ -99,7 +99,7 @@ def test_execute_defaults_loto7_line_predictions_to_mixed_v3(monkeypatch) -> Non
     assert "戦略: mixed_v3" in line_client.messages[0][1]
 
 
-def test_execute_keeps_loto6_default_strategy_until_mixed_loto6_wins_validation(monkeypatch) -> None:
+def test_execute_defaults_loto6_line_predictions_to_mixed_v3(monkeypatch) -> None:
     repo = _FakeRepository(_history_rows_loto6())
     line_client = _FakeLineClient()
     usecase = GenerateAndNotifyUseCase(repository=repo, line_client=line_client, logger=logging.getLogger(__name__))
@@ -120,10 +120,10 @@ def test_execute_keeps_loto6_default_strategy_until_mixed_loto6_wins_validation(
         execution_id="exec-loto6",
     )
 
-    assert captured["strategy"] == "default"
-    assert result["strategy"] == "default"
-    assert repo.saved_payloads[0]["strategy"] == "default"
-    assert "default" in line_client.messages[0][1]
+    assert captured["strategy"] == "mixed_v3"
+    assert result["strategy"] == "mixed_v3"
+    assert repo.saved_payloads[0]["strategy"] == "mixed_v3"
+    assert "mixed_v3" in line_client.messages[0][1]
 
 
 def test_execute_generates_predictions_sends_line_and_saves_run(monkeypatch) -> None:

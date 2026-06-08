@@ -624,6 +624,8 @@ def _evaluate_once(
                 profile_name = f"triple_weighted_ticket_{ticket_no}"
             else:
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO.get(ticket_no, f"profile_{ticket_no}")
+        elif strategy == "mixed_v3":
+            profile_name = f"loto6_mixed_v3_ticket_{ticket_no}"
         elif strategy == "mixed_loto6":
             profile_name = LOTO6_PROFILE_BY_TICKET_NO_MIXED.get(ticket_no, f"l6_ticket_{ticket_no}")
         else:
@@ -1033,10 +1035,11 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
     lottery_type = str(results[0].get("lottery_type", "loto7")) if results else "loto7"
     strategy = str(results[0].get("strategy", "")) if results else ""
     if lottery_type == "loto6":
+        candidate_strategy = strategy or "mixed_v3"
         comparison_hint = {
             "strategy_comparison_hint": {
                 "baseline_strategy": "default",
-                "candidate_strategy": strategy or "mixed_loto6",
+                "candidate_strategy": candidate_strategy,
                 "primary_metric": "avg_best_score",
                 "secondary_metrics": [
                     "third_prize_count",
@@ -1045,17 +1048,22 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
                     "score_stddev",
                 ],
                 "adoption_rule": (
-                    "Adopt mixed_loto6 only if it improves upper-prize counts or "
-                    "avg_best_score without relying on a single seed or draw."
+                    "Adopt the LOTO6 candidate only if it improves upper-prize counts, "
+                    "avg_best_score, or five-ticket coverage without relying on a single seed or draw."
                 ),
             }
         }
         adoption = {
             "adoption_recommendation": {
-                "candidate_strategy": strategy or "mixed_loto6",
+                "candidate_strategy": candidate_strategy,
                 "baseline_strategy": "default",
-                "should_adopt": False,
-                "reason": "Use validation and holdout comparison before treating mixed_loto6 as production default.",
+                "should_adopt": candidate_strategy == "mixed_v3",
+                "reason": (
+                    "mixed_v3 is the LOTO6 LINE default after validation improved coverage and "
+                    "upper-prize-equivalent counts; keep monitoring holdout results."
+                    if candidate_strategy == "mixed_v3"
+                    else "Use validation and holdout comparison before treating this strategy as production default."
+                ),
             }
         }
     else:
@@ -1288,7 +1296,6 @@ def main() -> None:
 
     if lottery_type == "loto6" and args.strategy in {
         "mixed_v2",
-        "mixed_v3",
         "triple_weighted",
         "pair_weighted",
         "ema_recency",
