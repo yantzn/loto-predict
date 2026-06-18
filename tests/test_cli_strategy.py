@@ -1,6 +1,6 @@
 """CLI strategy registration tests.
 
-backtest CLIの--strategy choicesにmixed/mixed_v2/mixed_v3/triple_weightedが表示されることを確認します。
+backtest CLIの--strategy choicesに主要な比較strategyが表示されることを確認します。
 """
 
 import subprocess
@@ -23,6 +23,7 @@ def test_cli_exposes_mixed_variants():
     assert "mixed_loto6" in help_text
     assert "mixed_v2" in help_text
     assert "mixed_v3" in help_text
+    assert "high_tier_v1" in help_text
     assert "triple_weighted" in help_text
     
     # Ensure invalid choice is rejected

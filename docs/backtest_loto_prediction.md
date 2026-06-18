@@ -10,6 +10,18 @@ python jobs/backtest_loto_prediction/main.py --lottery-type loto6 --target-draw-
 
 `target-draw-to=9999` を指定した場合、存在しない回はmissing扱いでsummaryに記録されます。validation範囲とholdout範囲を分け、単一seedや単一drawの上振れを勝ち筋と誤認しないようにしてください。
 
+## LOTO6 mixed_v3 analysis
+
+LOTO6版 `mixed_v3` は、Pair Affinity、EMA風の直近20/50/100回スコア、Hot/Neutral/Coldバランス、5口全体のcoverage penaltyを使います。LINE通知のLOTO6デフォルトも `mixed_v3` です。
+
+```powershell
+python jobs/backtest_loto_prediction/main.py --lottery-type loto6 --target-draw-from 2000 --target-draw-to 2109 --history-limits 50,100,150,200 --prediction-count 5 --seed-from 1 --seed-to 300 --input-jsonl ./local_storage/imported/loto6_history.jsonl --output-jsonl ./local_storage/backtest/loto6_mixed_v3_analysis.jsonl --strategy mixed_v3
+```
+
+ローカル履歴が第2106回までの場合、第2107回以降や欠番はskipされます。第2109回を単体検証するには、`local_storage/imported/loto6_history.jsonl` に第2109回の当選結果を取り込んでから実行してください。
+
+現行チューニングは Pair Affinity 0.32、candidate attempts 8、coverage weight 0.26 です。coverageは単純な拡散ではなく、5口全体で20〜28個程度のユニーク数字を目標にします。
+
 `jobs/backtest_loto_prediction` は、ロト予想 strategy を過去データ上で比較するためのCLIです。
 これは当選保証ではなく、過去データ上の参考評価として扱います。
 

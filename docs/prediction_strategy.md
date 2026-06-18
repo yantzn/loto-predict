@@ -12,7 +12,15 @@ profileは以下の5つです。
 - `l6_gap_repair`: 未出現間隔を補正し、0頻度数字を完全排除しない枠
 - `l6_diverse_explore`: 他4口と重複しにくい探索枠
 
-LINE通知のロト6予想は、明示strategyが指定されない場合 `mixed_loto6` を使います。過去データ上の参考評価であり、当選保証ではありません。
+LINE通知のロト6予想は、明示strategyが指定されない場合 `mixed_v3` を使います。過去データ上の参考評価であり、当選保証ではありません。
+
+## LOTO6 mixed_v3
+
+`mixed_v3` はロト6でも利用できます。ロト6版は、単体頻度への収束を避けるために、Pair Affinity、20/50/100回のEMA風直近スコア、Hot/Neutral/Coldバランス、5口全体のcoverage penaltyを使います。
+
+目的は「5口全体で同じ数字に寄りすぎないこと」です。第2000〜2109回の検証では、既存 `mixed` の平均ユニーク数字数が約15.95だったのに対し、ロト6 `mixed_v3` は約25.04まで増えました。
+
+現在のロト6LINE通知デフォルトは `mixed_v3` です。Pair Affinityは0.30〜0.34の範囲から0.32、candidate attemptsは速度と探索のバランスから8、coverage penaltyは5口で20〜28個程度のユニーク数字を目標に調整しています。
 
 ## mixed_v3
 

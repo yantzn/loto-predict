@@ -34,6 +34,17 @@ def test_registry_contains_mixed_variants():
         history=history,
     )
 
+    # high_tier_v1
+    generate_predictions(
+        number_scores=number_scores,
+        bonus_scores=bonus_scores,
+        lottery_type="loto7",
+        prediction_count=1,
+        strategy="high_tier_v1",
+        seed=1,
+        history=history,
+    )
+
     # triple_weighted
     generate_predictions(
         number_scores=number_scores,
@@ -51,6 +62,16 @@ def test_registry_contains_mixed_variants():
         lottery_type="loto6",
         prediction_count=1,
         strategy="mixed_loto6",
+        seed=1,
+        history=[[1, 2, 3, 4, 5, 6]] * 10,
+    )
+
+    # mixed_v3 for loto6
+    generate_predictions(
+        number_scores=[(i, 1.0) for i in range(1, 44)],
+        lottery_type="loto6",
+        prediction_count=1,
+        strategy="mixed_v3",
         seed=1,
         history=[[1, 2, 3, 4, 5, 6]] * 10,
     )

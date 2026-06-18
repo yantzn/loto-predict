@@ -61,6 +61,27 @@ def test_generate_predictions_loto7_pick_count_is_seven() -> None:
     assert all(len(set(prediction)) == 7 for prediction in predictions)
 
 
+def test_generate_predictions_loto7_high_tier_v1_experiment_is_reproducible() -> None:
+    bonus_scores = [(number, float(number)) for number in range(1, 38)]
+    kwargs = {
+        "number_scores": _number_scores_loto7(),
+        "bonus_scores": bonus_scores,
+        "lottery_type": "loto7",
+        "prediction_count": 5,
+        "strategy": "high_tier_v1",
+        "seed": 789,
+    }
+
+    predictions1 = generate_predictions(**kwargs)
+    predictions2 = generate_predictions(**kwargs)
+
+    assert predictions1 == predictions2
+    assert len(predictions1) == 5
+    assert len({tuple(sorted(prediction)) for prediction in predictions1}) == 5
+    assert all(len(prediction) == 7 for prediction in predictions1)
+    assert all(len(set(prediction)) == 7 for prediction in predictions1)
+
+
 def test_generate_predictions_loto6_default_uses_gap_repair_on_fifth_ticket() -> None:
     history = [
         [
