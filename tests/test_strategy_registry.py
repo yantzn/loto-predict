@@ -34,6 +34,17 @@ def test_registry_contains_mixed_variants():
         history=history,
     )
 
+    # high_tier_v1
+    generate_predictions(
+        number_scores=number_scores,
+        bonus_scores=bonus_scores,
+        lottery_type="loto7",
+        prediction_count=1,
+        strategy="high_tier_v1",
+        seed=1,
+        history=history,
+    )
+
     # triple_weighted
     generate_predictions(
         number_scores=number_scores,

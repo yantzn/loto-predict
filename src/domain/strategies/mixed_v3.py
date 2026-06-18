@@ -100,10 +100,10 @@ PROFILE_SCORE_WEIGHTS: dict[str, dict[str, float]] = {
         "combination_fit": 0.12,
     },
     "lane5_diversity_repair": {
-        "coverage_gap": 0.18,
-        "primary_frequency": 0.28,
-        "secondary_frequency": 0.18,
-        "long_frequency": 0.10,
+        "coverage_gap": 0.24,
+        "primary_frequency": 0.25,
+        "secondary_frequency": 0.16,
+        "long_frequency": 0.09,
         "recent_frequency": 0.16,
         "gap": 0.10,
     },
@@ -120,11 +120,11 @@ PROFILE_ROLES = {
 
 
 PROFILE_TOP_K = {
-    "lane1_ema_hot_core": 12,
+    "lane1_ema_hot_core": 14,
     "lane2_pair_weighted_core": 16,
     "lane3_long_200_balanced": 14,
-    "lane4_bonus_aware_balanced": 12,
-    "lane5_diversity_repair": 18,
+    "lane4_bonus_aware_balanced": 14,
+    "lane5_diversity_repair": 24,
 }
 
 
@@ -134,7 +134,7 @@ class MixedV3Config:
     min_weight: float = 0.0001
     min_pair_support: float = 1.0
     top_k: int = 14
-    candidate_attempts: int = 6
+    candidate_attempts: int = 8
 
 
 def build_default_mixed_v3_config() -> MixedV3Config:
@@ -532,9 +532,9 @@ class MixedStrategyV3:
         if duplicate:
             penalty += 5.0
         elif max_overlap >= 5:
-            penalty += 0.70 if profile_name == "lane5_diversity_repair" else 0.60
+            penalty += 0.95 if profile_name == "lane5_diversity_repair" else 0.75
         elif max_overlap == 4 and profile_name == "lane5_diversity_repair":
-            penalty += 0.30
+            penalty += 0.45
 
         fit_score = max(0.0, min(1.0, 0.65 + bonus - penalty))
         return {

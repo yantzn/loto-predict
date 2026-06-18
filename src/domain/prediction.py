@@ -609,6 +609,82 @@ def _loto7_profiles(prediction_count: int) -> list[Loto7Profile]:
     return expanded[:prediction_count]
 
 
+def _loto7_high_tier_profiles(prediction_count: int) -> list[Loto7Profile]:
+    # 2等・3等相当を強く評価できるかを調べる実験用profileです。
+    # mixed_v3は壊さず、上位一致を狙う比較戦略として本数字寄りの狭いpoolを多めにします。
+    profiles = [
+        Loto7Profile(
+            name="high_main7_hot_core",
+            main_pool_size=15,
+            bonus_pool_size=37,
+            main_sample_count=7,
+            bonus_sample_count=0,
+            main_score_ratio=0.97,
+            bonus_score_ratio_for_main=0.03,
+            bonus_main_ratio=0.30,
+            bonus_score_ratio=0.70,
+            temperature=0.62,
+        ),
+        Loto7Profile(
+            name="high_main7_balanced_100",
+            main_pool_size=18,
+            bonus_pool_size=37,
+            main_sample_count=7,
+            bonus_sample_count=0,
+            main_score_ratio=0.93,
+            bonus_score_ratio_for_main=0.07,
+            bonus_main_ratio=0.32,
+            bonus_score_ratio=0.68,
+            temperature=0.78,
+        ),
+        Loto7Profile(
+            name="high_main6_bonus1",
+            main_pool_size=18,
+            bonus_pool_size=16,
+            main_sample_count=6,
+            bonus_sample_count=1,
+            main_score_ratio=0.91,
+            bonus_score_ratio_for_main=0.09,
+            bonus_main_ratio=0.20,
+            bonus_score_ratio=0.80,
+            temperature=0.72,
+        ),
+        Loto7Profile(
+            name="high_main7_long_support",
+            main_pool_size=20,
+            bonus_pool_size=37,
+            main_sample_count=7,
+            bonus_sample_count=0,
+            main_score_ratio=0.90,
+            bonus_score_ratio_for_main=0.10,
+            bonus_main_ratio=0.35,
+            bonus_score_ratio=0.65,
+            temperature=0.86,
+        ),
+        Loto7Profile(
+            name="high_main5_bonus2_cover",
+            main_pool_size=22,
+            bonus_pool_size=20,
+            main_sample_count=5,
+            bonus_sample_count=2,
+            main_score_ratio=0.88,
+            bonus_score_ratio_for_main=0.12,
+            bonus_main_ratio=0.22,
+            bonus_score_ratio=0.78,
+            temperature=0.92,
+        ),
+    ]
+
+    if prediction_count <= len(profiles):
+        return profiles[:prediction_count]
+
+    expanded: list[Loto7Profile] = []
+    while len(expanded) < prediction_count:
+        expanded.extend(profiles)
+
+    return expanded[:prediction_count]
+
+
 def _generate_loto7_profile_prediction(
     *,
     profile: Loto7Profile,
@@ -758,6 +834,47 @@ def generate_loto7_second_prize_oriented_predictions(
     return predictions
 
 
+def generate_loto7_high_tier_predictions(
+    main_scores: list[tuple[int, float]],
+    bonus_scores: list[tuple[int, float]],
+    prediction_count: int,
+    rng: random.Random | None = None,
+    seed: int | None = None,
+    excluded_combinations: set[tuple[int, ...]] | None = None,
+) -> list[list[int]]:
+    # 2等・3等相当を強く意識する実験用生成関数です。
+    # 5口全体の広さよりも、本数字5個以上に届きやすい狭めの上位poolを優先します。
+    if prediction_count <= 0:
+        raise ValueError("prediction_count must be greater than 0")
+
+    random_source = rng if rng is not None else random.Random(seed)
+
+    main_score_map = _normalize_scores(main_scores)
+    bonus_score_map = _normalize_scores(bonus_scores)
+
+    predictions: list[list[int]] = []
+    seen = set(excluded_combinations or set())
+
+    for ticket_index, profile in enumerate(_loto7_high_tier_profiles(prediction_count)):
+        prediction = _generate_loto7_profile_prediction(
+            profile=profile,
+            main_score_map=main_score_map,
+            bonus_score_map=bonus_score_map,
+            rng=random_source,
+            seen=seen,
+            ticket_index=ticket_index,
+        )
+        predictions.append(prediction)
+
+    if len(predictions) != prediction_count:
+        raise ValueError(
+            f"failed to generate enough high-tier predictions: "
+            f"requested={prediction_count} generated={len(predictions)}"
+        )
+
+    return predictions
+
+
 def _score_ticket(ticket: list[int], number_scores: dict[int, float]) -> float:
     return sum(number_scores.get(number, 0.0) for number in ticket)
 
@@ -807,6 +924,19 @@ def _generate_predictions_primitive(
             prediction_count=prediction_count,
             rng=rng,
             seed=None if seed is None else seed + 10_000,
+            excluded_combinations=None,
+        )
+
+    if normalized_strategy == "high_tier_v1":
+        if normalized_lottery_type != "loto7" or bonus_scores is None:
+            raise ValueError("high_tier_v1 is only supported for loto7 with bonus_scores")
+
+        return generate_loto7_high_tier_predictions(
+            main_scores=number_scores,
+            bonus_scores=bonus_scores,
+            prediction_count=prediction_count,
+            rng=rng,
+            seed=None if seed is None else seed + 30_000,
             excluded_combinations=None,
         )
 
@@ -923,7 +1053,7 @@ def _generate_predictions_primitive(
 
     raise ValueError(
         f"Unknown strategy: {normalized_strategy}. Supported strategies are: "
-        "default, mixed, mixed_loto6, mixed_v2, mixed_v3, pair_weighted, "
+        "default, mixed, mixed_loto6, mixed_v2, mixed_v3, high_tier_v1, pair_weighted, "
         "ema_recency, triple_weighted."
     )
 

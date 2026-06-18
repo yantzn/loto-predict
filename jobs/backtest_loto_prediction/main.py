@@ -75,6 +75,14 @@ LOTO7_PROFILE_BY_TICKET_NO_MIXED_V3 = {
     for index, profile in enumerate(MIXED_V3_PROFILES, start=1)
 }
 
+LOTO7_PROFILE_BY_TICKET_NO_HIGH_TIER = {
+    1: "high_main7_hot_core",
+    2: "high_main7_balanced_100",
+    3: "high_main6_bonus1",
+    4: "high_main7_long_support",
+    5: "high_main5_bonus2_cover",
+}
+
 LOTO6_PROFILE_BY_TICKET_NO_MIXED = {
     index: profile
     for index, profile in enumerate(MIXED_LOTO6_PROFILES, start=1)
@@ -618,6 +626,8 @@ def _evaluate_once(
         if lottery_type == "loto7":
             if strategy == "mixed_v3":
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO_MIXED_V3.get(ticket_no, f"lane_{ticket_no}")
+            elif strategy == "high_tier_v1":
+                profile_name = LOTO7_PROFILE_BY_TICKET_NO_HIGH_TIER.get(ticket_no, f"high_tier_{ticket_no}")
             elif strategy == "mixed_v2":
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO_MIXED_V2.get(ticket_no, f"lane_{ticket_no}")
             elif strategy == "triple_weighted":
@@ -1067,10 +1077,12 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
             }
         }
     else:
+        candidate_strategy = strategy or "mixed_v3"
+        is_high_tier_experiment = candidate_strategy == "high_tier_v1"
         comparison_hint = {
             "strategy_comparison_hint": {
                 "baseline_strategy": "mixed_v2",
-                "candidate_strategy": "mixed_v3",
+                "candidate_strategy": candidate_strategy,
                 "primary_metric": "avg_best_score",
                 "secondary_metrics": [
                     "third_prize_count",
@@ -1080,17 +1092,21 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
                     "second_prize_runs",
                 ],
                 "adoption_rule": (
-                    "Adopt mixed_v3 only if it improves 3rd/4th prize counts or "
-                    "avg_best_score without eliminating bonus-aware upside."
+                    "Treat high_tier_v1 as experimental. Adopt a LOTO7 candidate only if it improves "
+                    "2nd/3rd/4th prize counts or avg_best_score without eliminating bonus-aware upside."
                 ),
             }
         }
         adoption = {
             "adoption_recommendation": {
-                "candidate_strategy": "mixed_v3",
+                "candidate_strategy": candidate_strategy,
                 "baseline_strategy": "mixed_v2_fix",
                 "should_adopt": False,
-                "reason": "Adopt only after 600-674 validation and 650-679 validation improve key metrics.",
+                "reason": (
+                    "high_tier_v1 is experimental only; keep mixed_v3 unchanged and compare on holdout before adoption."
+                    if is_high_tier_experiment
+                    else "Adopt only after 600-674 validation and 650-679 validation improve key metrics."
+                ),
             }
         }
 
@@ -1237,11 +1253,19 @@ def main() -> None:
     parser.add_argument("--prediction-count", type=int, default=5)
     parser.add_argument(
         "--strategy",
-        choices=["default", "mixed", "mixed_loto6", "mixed_v2", "mixed_v3", "triple_weighted"],
+        choices=[
+            "default",
+            "mixed",
+            "mixed_loto6",
+            "mixed_v2",
+            "mixed_v3",
+            "high_tier_v1",
+            "triple_weighted",
+        ],
         default="mixed",
         help=(
             "Prediction strategy to use. Available: default, mixed, mixed_loto6, "
-            "mixed_v2, mixed_v3, triple_weighted"
+            "mixed_v2, mixed_v3, high_tier_v1 (experimental), triple_weighted"
         ),
     )
 

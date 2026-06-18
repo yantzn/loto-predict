@@ -37,9 +37,10 @@ def test_mixed_v3_weights_follow_validation_adjustment():
 
     assert PROFILE_SCORE_WEIGHTS["lane2_pair_weighted_core"]["pair_affinity"] <= 0.05
     assert PROFILE_SCORE_WEIGHTS["lane4_bonus_aware_balanced"]["bonus_affinity"] <= 0.05
-    assert PROFILE_SCORE_WEIGHTS["lane5_diversity_repair"]["coverage_gap"] <= 0.20
+    assert 0.20 <= PROFILE_SCORE_WEIGHTS["lane5_diversity_repair"]["coverage_gap"] <= 0.25
     assert PROFILE_TOP_K["lane1_ema_hot_core"] < PROFILE_TOP_K["lane5_diversity_repair"]
     assert PROFILE_TOP_K["lane4_bonus_aware_balanced"] < PROFILE_TOP_K["lane5_diversity_repair"]
+    assert build_default_mixed_v3_config().candidate_attempts >= 8
 
 def test_mixed_v3_normalization():
     # Empty scores
