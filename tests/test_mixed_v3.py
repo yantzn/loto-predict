@@ -33,6 +33,7 @@ def test_mixed_v3_weights_follow_validation_adjustment():
 
     assert PROFILE_HISTORY_WINDOWS["lane1_ema_hot_core"]["primary"] == 100
     assert PROFILE_HISTORY_WINDOWS["lane2_pair_weighted_core"]["primary"] == 100
+    assert PROFILE_HISTORY_WINDOWS["lane3_long_200_balanced"]["primary"] == 150
     assert PROFILE_HISTORY_WINDOWS["lane5_diversity_repair"]["primary"] == 50
 
     assert PROFILE_SCORE_WEIGHTS["lane2_pair_weighted_core"]["pair_affinity"] <= 0.05
@@ -104,9 +105,15 @@ def test_mixed_v3_combination_evaluation():
 def test_mixed_v3_generate_predictions():
     config = build_default_mixed_v3_config()
     strategy = MixedStrategyV3(config)
-    history = [
-        [1, 2, 3, 4, 5, 6, 7]
-    ] * 210
+    history = []
+    for draw_index in range(210):
+        draw = []
+        for offset in range(7):
+            number = ((draw_index * 3 + offset * 5) % 37) + 1
+            while number in draw:
+                number = number % 37 + 1
+            draw.append(number)
+        history.append(sorted(draw))
     bonus_scores = [(n, 0.1) for n in range(1, 38)]
     predictions = strategy.generate_predictions(
         history=history,
@@ -118,3 +125,36 @@ def test_mixed_v3_generate_predictions():
     for p in predictions:
         assert len(p) == 7
         assert len(set(p)) == 7
+
+    # 5口全体を共同選択し、従来の17〜20数字への過剰収束を抑えます。
+    assert len(set().union(*(set(prediction) for prediction in predictions))) >= 22
+    usage = {
+        number: sum(number in prediction for prediction in predictions)
+        for number in range(1, 38)
+    }
+    assert max(usage.values()) <= 3
+
+
+def test_mixed_v3_joint_selection_is_reproducible():
+    """同一seedでは共同coverage最適化を含めて同じ5口になることを確認します。"""
+    strategy = MixedStrategyV3(build_default_mixed_v3_config())
+    history = []
+    for draw_index in range(210):
+        draw = []
+        for offset in range(7):
+            number = ((draw_index * 3 + offset * 5) % 37) + 1
+            while number in draw:
+                number = number % 37 + 1
+            draw.append(number)
+        history.append(sorted(draw))
+    bonus_scores = [(number, number / 37) for number in range(1, 38)]
+
+    kwargs = {
+        "history": history,
+        "prediction_count": 5,
+        "seed": 19,
+        "bonus_scores": bonus_scores,
+        "target_draw": 683,
+        "history_limit": 100,
+    }
+    assert strategy.generate_predictions(**kwargs) == strategy.generate_predictions(**kwargs)

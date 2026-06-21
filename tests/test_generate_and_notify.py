@@ -72,7 +72,7 @@ def _fake_predictions(
     return [[1, 2, 3, 4, 5, 6] for _ in range(prediction_count)]
 
 
-def test_execute_defaults_loto7_line_predictions_to_mixed_v3(monkeypatch) -> None:
+def test_execute_defaults_loto7_line_predictions_to_mixed_v2(monkeypatch) -> None:
     repo = _FakeRepository(_history_rows_loto7())
     line_client = _FakeLineClient()
     usecase = GenerateAndNotifyUseCase(repository=repo, line_client=line_client, logger=logging.getLogger(__name__))
@@ -93,10 +93,10 @@ def test_execute_defaults_loto7_line_predictions_to_mixed_v3(monkeypatch) -> Non
         execution_id="exec-loto7",
     )
 
-    assert captured["strategy"] == "mixed_v3"
-    assert result["strategy"] == "mixed_v3"
-    assert repo.saved_payloads[0]["strategy"] == "mixed_v3"
-    assert "戦略: mixed_v3" in line_client.messages[0][1]
+    assert captured["strategy"] == "mixed_v2"
+    assert result["strategy"] == "mixed_v2"
+    assert repo.saved_payloads[0]["strategy"] == "mixed_v2"
+    assert "戦略: mixed_v2" in line_client.messages[0][1]
 
 
 def test_execute_defaults_loto6_line_predictions_to_mixed_v3(monkeypatch) -> None:

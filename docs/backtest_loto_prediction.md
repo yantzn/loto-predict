@@ -1,5 +1,15 @@
 # backtest_loto_prediction
 
+## LOTO7 production strategy
+
+現在のLINE通知デフォルトは `mixed_v2` です。第600〜682回の比較で、`mixed_v3`より4等以上と5口coverageが優位だったためです。`mixed_v3`は共同coverage最適化の比較候補として、`--strategy mixed_v3`を明示した場合のみ使用します。
+
+`mixed_v2_tuned`は本番へ自動適用されないLOTO7実験戦略です。第675〜682回で比較する場合は次を実行します。
+
+```powershell
+python jobs/backtest_loto_prediction/main.py --lottery-type loto7 --target-draw-from 675 --target-draw-to 682 --history-limits 50,100,150,200 --prediction-count 5 --seed-from 1 --seed-to 100 --input-jsonl ./local_storage/imported/loto7_history.jsonl --output-jsonl ./local_storage/backtest/loto7_mixed_v2_tuned_holdout_675_682.jsonl --strategy mixed_v2_tuned
+```
+
 ## LOTO6 mixed_loto6 validation
 
 ロト6は `mixed_loto6` で検証できます。ロト7向け `mixed_v3` とは分け、100回窓を主軸、150回窓を安定補助、50回窓を探索枠として扱います。

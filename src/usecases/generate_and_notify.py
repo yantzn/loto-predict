@@ -208,7 +208,9 @@ class GenerateAndNotifyUseCase:
         if lottery_type == "loto6":
             return "mixed_v3"
         if lottery_type == "loto7":
-            return "mixed_v3"
+            # 600〜682回の再評価ではmixed_v2が4等以上と5口coverageで優位でした。
+            # mixed_v3は共同最適化の再検証中のため、明示指定時だけ利用します。
+            return "mixed_v2"
         return "default"
 
     def _latest_draw_no(self, history_rows: list[dict[str, object]]) -> int | None:

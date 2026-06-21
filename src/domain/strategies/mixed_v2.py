@@ -51,6 +51,14 @@ class MixedV2Config:
     diverse_main_ratio: float = 0.85
     diverse_bonus_ratio: float = 0.15
     diverse_quality_weight: float = 0.0005
+    pair_base_weight: float = 0.62
+    pair_ema_weight: float = 0.25
+    pair_affinity_weight: float = 0.08
+    pair_explore_weight: float = 0.05
+    pair_fallback_base_weight: float = 0.74
+    pair_fallback_ema_weight: float = 0.23
+    pair_fallback_explore_weight: float = 0.03
+    seed_namespace: str = "mixed_v2"
     ema_balanced_config: EmaRecencyConfig = EmaRecencyConfig(
         alpha_short=0.18,
         alpha_mid=0.12,
@@ -99,8 +107,37 @@ def build_default_mixed_v2_config() -> MixedV2Config:
     )
 
 
-def allocate_strategy_slots(history_limit: int) -> list[SlotConfig]:
-    config = build_default_mixed_v2_config()
+def build_tuned_mixed_v2_config() -> MixedV2Config:
+    """本番mixed_v2を変えず、上位一致を狙う比較用の保守的な調整を返します。"""
+    default = build_default_mixed_v2_config()
+    return MixedV2Config(
+        slots=default.slots,
+        history_threshold_for_ema=default.history_threshold_for_ema,
+        diverse_candidate_pool_size=24,
+        pair_config=default.pair_config,
+        ema_hot_config=default.ema_hot_config,
+        min_pair_support=default.min_pair_support,
+        pair_top_k=default.pair_top_k,
+        diverse_main_ratio=0.90,
+        diverse_bonus_ratio=0.10,
+        diverse_quality_weight=0.025,
+        ema_balanced_config=default.ema_balanced_config,
+        pair_base_weight=0.68,
+        pair_ema_weight=0.25,
+        pair_affinity_weight=0.04,
+        pair_explore_weight=0.03,
+        pair_fallback_base_weight=0.78,
+        pair_fallback_ema_weight=0.20,
+        pair_fallback_explore_weight=0.02,
+        seed_namespace="mixed_v2_tuned",
+    )
+
+
+def allocate_strategy_slots(
+    history_limit: int,
+    config: MixedV2Config | None = None,
+) -> list[SlotConfig]:
+    config = config or build_default_mixed_v2_config()
     use_ema = history_limit >= config.history_threshold_for_ema
 
     resolved: list[SlotConfig] = []
@@ -258,6 +295,13 @@ def build_lane3_pair_weighted_scores(
     selected: Sequence[int],
     config: PairConfig,
     min_pair_support: float = 2.0,
+    base_weight: float = 0.62,
+    ema_weight: float = 0.25,
+    pair_weight: float = 0.08,
+    explore_weight: float = 0.05,
+    fallback_base_weight: float = 0.74,
+    fallback_ema_weight: float = 0.23,
+    fallback_explore_weight: float = 0.03,
 ) -> dict[int, dict[str, float | bool]]:
     scorer = PairCooccurrenceScorer(config)
     scorer.score_numbers(history)
@@ -275,13 +319,17 @@ def build_lane3_pair_weighted_scores(
         explore_bonus = max(0.0, 1.0 - base_score) * 0.35
         fallback_used = bool(selected) and pair_support < min_pair_support
         if fallback_used:
-            final_score = 0.74 * base_score + 0.23 * ema_score + 0.03 * explore_bonus
+            final_score = (
+                fallback_base_weight * base_score
+                + fallback_ema_weight * ema_score
+                + fallback_explore_weight * explore_bonus
+            )
         else:
             final_score = (
-                0.62 * base_score
-                + 0.25 * ema_score
-                + 0.08 * pair_score
-                + 0.05 * explore_bonus
+                base_weight * base_score
+                + ema_weight * ema_score
+                + pair_weight * pair_score
+                + explore_weight * explore_bonus
             )
         result[number] = {
             "base": base_score,
@@ -486,12 +534,18 @@ class MixedStrategyV2:
             dict(number_scores) if number_scores is not None else dict(calculate_main_number_scores(list(history), ScoreWeights()))
         )
         bonus_score_map = dict(bonus_scores)
-        slots = allocate_strategy_slots(len(history))[:prediction_count]
+        slots = allocate_strategy_slots(len(history), self.config)[:prediction_count]
         selected: list[list[int]] = []
         seen: set[tuple[int, ...]] = set()
 
         for slot_index, slot in enumerate(slots):
-            rng_seed = stable_seed("mixed_v2", target_draw, history_limit, seed, slot_index)
+            rng_seed = stable_seed(
+                self.config.seed_namespace,
+                target_draw,
+                history_limit,
+                seed,
+                slot_index,
+            )
             ticket = self._generate_slot_ticket(
                 slot=slot,
                 rng=random.Random(rng_seed),
@@ -606,6 +660,13 @@ class MixedStrategyV2:
                 selected=selected,
                 config=self.config.pair_config,
                 min_pair_support=self.config.min_pair_support,
+                base_weight=self.config.pair_base_weight,
+                ema_weight=self.config.pair_ema_weight,
+                pair_weight=self.config.pair_affinity_weight,
+                explore_weight=self.config.pair_explore_weight,
+                fallback_base_weight=self.config.pair_fallback_base_weight,
+                fallback_ema_weight=self.config.pair_fallback_ema_weight,
+                fallback_explore_weight=self.config.pair_fallback_explore_weight,
             )
             scored: list[tuple[float, int]] = []
             for number in candidate_pool:

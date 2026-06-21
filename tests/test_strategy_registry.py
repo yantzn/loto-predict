@@ -34,6 +34,17 @@ def test_registry_contains_mixed_variants():
         history=history,
     )
 
+    # mixed_v2_tunedは本番mixed_v2と別seed系列で比較できるLOTO7実験戦略です。
+    generate_predictions(
+        number_scores=number_scores,
+        bonus_scores=bonus_scores,
+        lottery_type="loto7",
+        prediction_count=1,
+        strategy="mixed_v2_tuned",
+        seed=1,
+        history=history,
+    )
+
     # high_tier_v1
     generate_predictions(
         number_scores=number_scores,

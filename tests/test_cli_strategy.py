@@ -22,6 +22,7 @@ def test_cli_exposes_mixed_variants():
     # Ensure the choices are listed
     assert "mixed_loto6" in help_text
     assert "mixed_v2" in help_text
+    assert "mixed_v2_tuned" in help_text
     assert "mixed_v3" in help_text
     assert "high_tier_v1" in help_text
     assert "triple_weighted" in help_text

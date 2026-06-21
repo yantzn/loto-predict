@@ -15,7 +15,11 @@ from src.domain.selection.diversity import (
 from src.domain.strategies.ema_recency import EmaRecencyConfig, rank_ema_recency_candidates
 from src.domain.strategies.loto6_mixed_v3 import Loto6MixedV3Strategy, build_default_loto6_mixed_v3_config
 from src.domain.strategies.mixed_loto6 import MixedLoto6Strategy, build_default_mixed_loto6_config
-from src.domain.strategies.mixed_v2 import MixedStrategyV2, build_default_mixed_v2_config
+from src.domain.strategies.mixed_v2 import (
+    MixedStrategyV2,
+    build_default_mixed_v2_config,
+    build_tuned_mixed_v2_config,
+)
 from src.domain.strategies.mixed_v3 import MixedStrategyV3, build_default_mixed_v3_config
 from src.domain.strategies.pair_weighted import rank_pair_weighted_candidates
 from src.domain.strategies.triple_weighted import (
@@ -983,15 +987,19 @@ def _generate_predictions_primitive(
             config=ema_config or EmaRecencyConfig(),
         )
 
-    if normalized_strategy == "mixed_v2":
+    if normalized_strategy in {"mixed_v2", "mixed_v2_tuned"}:
         if normalized_lottery_type != "loto7":
-            raise ValueError("mixed_v2 is only supported for loto7")
+            raise ValueError(f"{normalized_strategy} is only supported for loto7")
         if bonus_scores is None:
-            raise ValueError("bonus_scores is required for mixed_v2")
+            raise ValueError(f"bonus_scores is required for {normalized_strategy}")
         if history is None:
-            raise ValueError("history is required for mixed_v2")
+            raise ValueError(f"history is required for {normalized_strategy}")
 
-        config = build_default_mixed_v2_config()
+        config = (
+            build_tuned_mixed_v2_config()
+            if normalized_strategy == "mixed_v2_tuned"
+            else build_default_mixed_v2_config()
+        )
         strategy_impl = MixedStrategyV2(config)
         return strategy_impl.generate_predictions(
             history=history,
@@ -1053,7 +1061,8 @@ def _generate_predictions_primitive(
 
     raise ValueError(
         f"Unknown strategy: {normalized_strategy}. Supported strategies are: "
-        "default, mixed, mixed_loto6, mixed_v2, mixed_v3, high_tier_v1, pair_weighted, "
+        "default, mixed, mixed_loto6, mixed_v2, mixed_v2_tuned, mixed_v3, "
+        "high_tier_v1, pair_weighted, "
         "ema_recency, triple_weighted."
     )
 

@@ -32,7 +32,7 @@ MIXED_V3_PROFILES = [
 PROFILE_HISTORY_WINDOWS: dict[str, dict[str, int]] = {
     "lane1_ema_hot_core": {
         "primary": 100,
-        "secondary": 200,
+        "secondary": 150,
         "recent": 30,
         "short": 50,
         "medium": 150,
@@ -44,14 +44,14 @@ PROFILE_HISTORY_WINDOWS: dict[str, dict[str, int]] = {
         "recent": 30,
     },
     "lane3_long_200_balanced": {
-        "primary": 100,
+        "primary": 150,
         "secondary": 200,
         "recent": 50,
-        "medium": 150,
+        "medium": 100,
     },
     "lane4_bonus_aware_balanced": {
         "primary": 100,
-        "secondary": 200,
+        "secondary": 150,
         "recent": 50,
         "bonus_window": 200,
     },
@@ -120,11 +120,11 @@ PROFILE_ROLES = {
 
 
 PROFILE_TOP_K = {
-    "lane1_ema_hot_core": 14,
-    "lane2_pair_weighted_core": 16,
-    "lane3_long_200_balanced": 14,
-    "lane4_bonus_aware_balanced": 14,
-    "lane5_diversity_repair": 24,
+    "lane1_ema_hot_core": 18,
+    "lane2_pair_weighted_core": 20,
+    "lane3_long_200_balanced": 18,
+    "lane4_bonus_aware_balanced": 18,
+    "lane5_diversity_repair": 30,
 }
 
 
@@ -134,7 +134,22 @@ class MixedV3Config:
     min_weight: float = 0.0001
     min_pair_support: float = 1.0
     top_k: int = 14
-    candidate_attempts: int = 8
+    candidate_attempts: int = 16
+    joint_beam_width: int = 64
+    coverage_target_min: int = 22
+    coverage_target_max: int = 25
+    max_regular_number_usage: int = 2
+    max_core_number_usage: int = 3
+    core_number_count: int = 3
+
+
+@dataclass(frozen=True)
+class _TicketCandidate:
+    """profileごとに生成した候補と、当該profile内での品質を保持します。"""
+
+    profile_name: str
+    numbers: tuple[int, ...]
+    quality: float
 
 
 def build_default_mixed_v3_config() -> MixedV3Config:
@@ -329,23 +344,25 @@ class MixedStrategyV3:
         bonus_score_map = dict(bonus_scores)
         sum_percentiles = _calculate_sum_percentiles(history_list)
 
-        tickets: list[list[int]] = []
-        seen: set[tuple[int, ...]] = set()
+        candidate_pools: list[list[_TicketCandidate]] = []
         for index, profile_name in enumerate(MIXED_V3_PROFILES[:prediction_count]):
             rng = random.Random(stable_seed("mixed_v3", target_draw, history_limit, seed, index))
-            ticket = self._generate_ticket_for_profile(
+            candidates = self._generate_candidates_for_profile(
                 profile_name=profile_name,
                 history=history_list,
                 main_score_map=main_score_map,
                 bonus_score_map=bonus_score_map,
-                existing_tickets=tickets,
-                seen=seen,
                 sum_percentiles=sum_percentiles,
                 rng=rng,
             )
-            seen.add(tuple(sorted(ticket)))
-            tickets.append(ticket)
-        return tickets
+            candidate_pools.append(candidates)
+
+        # 各profileを順番に確定すると、先行口のhot数字へ後続口も収束しやすくなります。
+        # 全profileの候補を揃えてから5口全体を選び、番号品質とcoverageを同時に評価します。
+        return self._select_joint_ticket_set(
+            candidate_pools=candidate_pools,
+            main_score_map=main_score_map,
+        )
 
     def profile_number_breakdown(
         self,
@@ -400,26 +417,23 @@ class MixedStrategyV3:
             min_weight=self.config.min_weight,
         )
 
-    def _generate_ticket_for_profile(
+    def _generate_candidates_for_profile(
         self,
         *,
         profile_name: str,
         history: list[Draw],
         main_score_map: dict[int, float],
         bonus_score_map: dict[int, float],
-        existing_tickets: list[list[int]],
-        seen: set[tuple[int, ...]],
         sum_percentiles: dict[str, float],
         rng: random.Random,
-    ) -> list[int]:
-        best_ticket: list[int] | None = None
-        best_score = -999.0
+    ) -> list[_TicketCandidate]:
+        candidates: dict[tuple[int, ...], _TicketCandidate] = {}
         static_rows = self.profile_number_breakdown(
             profile_name=profile_name,
             history=history,
             bonus_score_map=bonus_score_map,
             selected=[],
-            existing_tickets=existing_tickets,
+            existing_tickets=[],
         )
         pair_weight = PROFILE_SCORE_WEIGHTS[profile_name].get("pair_affinity", 0.0)
         pair_history = history[: PROFILE_HISTORY_WINDOWS[profile_name].get("secondary", 100)]
@@ -430,7 +444,7 @@ class MixedStrategyV3:
             scorer.score_numbers(pair_history)
             pair_stats = scorer._stats
 
-        for attempt in range(self.config.candidate_attempts):
+        for _ in range(self.config.candidate_attempts):
             selected: list[int] = []
             while len(selected) < 7:
                 rows = static_rows
@@ -459,31 +473,165 @@ class MixedStrategyV3:
                 selected.append(rng.choices(numbers, weights=weights, k=1)[0])
 
             ticket = sorted(selected)
-            key = tuple(ticket)
-            if key in seen:
-                continue
-
             adjustment = self.evaluate_combination_adjustment(
                 ticket=ticket,
-                existing_tickets=existing_tickets,
+                existing_tickets=[],
                 sum_percentiles=sum_percentiles,
                 profile_name=profile_name,
             )
-            quality = sum(main_score_map.get(number, 0.0) for number in ticket) / max(1, len(ticket))
-            candidate_score = quality * 0.01 + float(adjustment["fit_score"])
-            if candidate_score > best_score:
-                best_score = candidate_score
-                best_ticket = ticket
-            if candidate_score >= 0.95 and attempt >= 10:
-                break
+            profile_quality = mean(static_rows[number]["final"] for number in ticket)
+            base_quality = mean(main_score_map.get(number, 0.0) for number in ticket)
+            pair_quality = self._ticket_pair_quality(
+                ticket=ticket,
+                pair_stats=pair_stats,
+                shrink_k=self.config.pair_config.shrink_k,
+            )
 
-        if best_ticket is not None:
-            return best_ticket
+            # profile固有スコアを最終候補比較にも使います。旧実装はcombination_fitが
+            # ほぼ全てを占め、異なるprofileが似た番号へ収束しやすい状態でした。
+            number_quality = profile_quality * 0.80 + base_quality * 0.20
+            candidate_score = (
+                number_quality * 0.45
+                + pair_quality * 0.15
+                + float(adjustment["fit_score"]) * 0.20
+            )
+            key = tuple(ticket)
+            candidate = _TicketCandidate(profile_name, key, candidate_score)
+            previous = candidates.get(key)
+            if previous is None or candidate.quality > previous.quality:
+                candidates[key] = candidate
 
-        while True:
-            fallback = sorted(rng.sample(list(range(1, 38)), 7))
-            if tuple(fallback) not in seen:
-                return fallback
+        if not candidates:
+            fallback = tuple(sorted(rng.sample(list(range(1, 38)), 7)))
+            candidates[fallback] = _TicketCandidate(profile_name, fallback, 0.0)
+
+        return sorted(
+            candidates.values(),
+            key=lambda candidate: (-candidate.quality, candidate.numbers),
+        )
+
+    def _ticket_pair_quality(
+        self,
+        *,
+        ticket: list[int],
+        pair_stats: Any,
+        shrink_k: float,
+    ) -> float:
+        """候補内のpair supportを0〜1へ縮小し、raw countの過大評価を避けます。"""
+        if pair_stats is None:
+            return 0.0
+        values = []
+        for left, right in combinations(ticket, 2):
+            support = pair_stats.pair_counts.get((min(left, right), max(left, right)), 0.0)
+            values.append(support / (support + shrink_k) if shrink_k > 0 else support)
+        return mean(values) if values else 0.0
+
+    def _select_joint_ticket_set(
+        self,
+        *,
+        candidate_pools: list[list[_TicketCandidate]],
+        main_score_map: dict[int, float],
+    ) -> list[list[int]]:
+        """profile候補をbeam searchし、5口全体のcoverageと品質を両立させます。"""
+        if not candidate_pools:
+            return []
+
+        core_numbers = {
+            number
+            for number, _ in sorted(
+                main_score_map.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[: self.config.core_number_count]
+        }
+        # state: (累積スコア, 選択候補, 数字別使用回数)
+        beam: list[tuple[float, tuple[_TicketCandidate, ...], dict[int, int]]] = [
+            (0.0, tuple(), {})
+        ]
+
+        for pool in candidate_pools:
+            expanded: list[tuple[float, tuple[_TicketCandidate, ...], dict[int, int]]] = []
+            for score, selected, usage in beam:
+                selected_sets = [set(candidate.numbers) for candidate in selected]
+                for candidate in pool:
+                    numbers = set(candidate.numbers)
+                    if any(numbers == existing for existing in selected_sets):
+                        continue
+
+                    coverage_gain = mean(
+                        1.0 if usage.get(number, 0) == 0 else 0.35 if usage.get(number, 0) == 1 else 0.0
+                        for number in candidate.numbers
+                    )
+                    max_overlap = max(
+                        (len(numbers & existing) for existing in selected_sets),
+                        default=0,
+                    )
+                    overlap_penalty = 0.0
+                    if max_overlap >= 5:
+                        overlap_penalty = 0.45
+                    elif max_overlap == 4:
+                        overlap_penalty = 0.16
+
+                    next_usage = dict(usage)
+                    usage_penalty = 0.0
+                    for number in candidate.numbers:
+                        next_usage[number] = next_usage.get(number, 0) + 1
+                        limit = (
+                            self.config.max_core_number_usage
+                            if number in core_numbers
+                            else self.config.max_regular_number_usage
+                        )
+                        if next_usage[number] > limit:
+                            usage_penalty += 0.40 * (next_usage[number] - limit)
+
+                    expanded.append(
+                        (
+                            score
+                            + candidate.quality
+                            + coverage_gain * 0.35
+                            - overlap_penalty
+                            - usage_penalty,
+                            (*selected, candidate),
+                            next_usage,
+                        )
+                    )
+
+            expanded.sort(
+                key=lambda state: (
+                    -state[0],
+                    tuple(candidate.numbers for candidate in state[1]),
+                )
+            )
+            beam = expanded[: self.config.joint_beam_width]
+
+        if not beam:
+            raise ValueError("failed to select a unique mixed_v3 ticket set")
+
+        ranked_states = []
+        for score, selected, usage in beam:
+            coverage = len(usage)
+            if self.config.coverage_target_min <= coverage <= self.config.coverage_target_max:
+                coverage_fit = 1.0
+            elif coverage < self.config.coverage_target_min:
+                coverage_fit = coverage / self.config.coverage_target_min
+            else:
+                coverage_fit = self.config.coverage_target_max / coverage
+            coverage_shortfall = max(0, self.config.coverage_target_min - coverage)
+            ranked_states.append(
+                (
+                    score
+                    + coverage_fit * 0.35
+                    - coverage_shortfall * 0.30,
+                    selected,
+                )
+            )
+
+        ranked_states.sort(
+            key=lambda state: (
+                -state[0],
+                tuple(candidate.numbers for candidate in state[1]),
+            )
+        )
+        return [list(candidate.numbers) for candidate in ranked_states[0][1]]
 
     def evaluate_combination_adjustment(
         self,
