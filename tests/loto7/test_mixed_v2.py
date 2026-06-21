@@ -15,6 +15,7 @@ from src.domain.strategies.mixed_v2 import (
     allocate_strategy_slots,
     build_lane3_pair_weighted_scores,
     build_default_mixed_v2_config,
+    build_tuned_mixed_v2_config,
 )
 from src.domain.prediction import generate_predictions
 
@@ -67,6 +68,17 @@ def test_mixed_v2_pair_and_explore_lanes_are_downweighted() -> None:
     assert config.diverse_quality_weight < 0.001
 
 
+def test_mixed_v2_tuned_keeps_baseline_and_reduces_pair_dependency() -> None:
+    baseline = build_default_mixed_v2_config()
+    tuned = build_tuned_mixed_v2_config()
+
+    assert baseline.seed_namespace == "mixed_v2"
+    assert tuned.seed_namespace == "mixed_v2_tuned"
+    assert tuned.pair_affinity_weight < baseline.pair_affinity_weight
+    assert tuned.pair_base_weight > baseline.pair_base_weight
+    assert tuned.diverse_quality_weight > baseline.diverse_quality_weight
+
+
 def test_mixed_v2_generate_predictions_returns_five_unique_tickets() -> None:
     history = _build_sample_history()
     main_scores = calculate_main_number_scores(history, ScoreWeights())
@@ -104,6 +116,27 @@ def test_mixed_v2_can_generate_fewer_than_five_tickets() -> None:
 
     assert len(predictions) == 3
     assert len({tuple(prediction) for prediction in predictions}) == 3
+
+
+def test_mixed_v2_tuned_is_reproducible_and_distinct_from_baseline() -> None:
+    history = _build_sample_history() * 30
+    main_scores = calculate_main_number_scores(history, ScoreWeights())
+    bonus_scores = calculate_bonus_number_scores(history, ScoreWeights())
+    kwargs = {
+        "number_scores": main_scores,
+        "bonus_scores": bonus_scores,
+        "lottery_type": "loto7",
+        "prediction_count": 5,
+        "history": history,
+        "seed": 17,
+        "target_draw": 683,
+        "history_limit": 100,
+    }
+
+    tuned = generate_predictions(strategy="mixed_v2_tuned", **kwargs)
+    assert tuned == generate_predictions(strategy="mixed_v2_tuned", **kwargs)
+    assert tuned != generate_predictions(strategy="mixed_v2", **kwargs)
+    assert len({tuple(sorted(ticket)) for ticket in tuned}) == 5
 
 
 def test_lane3_pair_weighted_uses_fallback_when_pair_support_sparse() -> None:

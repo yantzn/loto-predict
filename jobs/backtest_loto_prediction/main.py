@@ -28,7 +28,10 @@ from src.domain.strategies.mixed_loto6 import (
     MIXED_LOTO6_PROFILES,
     PROFILE_ROLES as LOTO6_PROFILE_ROLES,
 )
-from src.domain.strategies.mixed_v2 import build_lane3_pair_weighted_scores
+from src.domain.strategies.mixed_v2 import (
+    build_lane3_pair_weighted_scores,
+    build_tuned_mixed_v2_config,
+)
 from src.domain.strategies.mixed_v3 import (
     MIXED_V3_PROFILES,
     PROFILE_ROLES,
@@ -393,7 +396,8 @@ def _score_breakdown_for_ticket(
         "fallback_used": False,
     }
 
-    if strategy == "mixed_v2" and profile_name == "lane3_pair_weighted":
+    if strategy in {"mixed_v2", "mixed_v2_tuned"} and profile_name == "lane3_pair_weighted":
+        tuned_config = build_tuned_mixed_v2_config() if strategy == "mixed_v2_tuned" else None
         selected: list[int] = []
         pair_rows: list[dict[str, float | bool]] = []
         for number in prediction:
@@ -402,6 +406,19 @@ def _score_breakdown_for_ticket(
                 main_score_map=main_score_map,
                 selected=selected,
                 config=pair_config or PairConfig(),
+                base_weight=tuned_config.pair_base_weight if tuned_config else 0.62,
+                ema_weight=tuned_config.pair_ema_weight if tuned_config else 0.25,
+                pair_weight=tuned_config.pair_affinity_weight if tuned_config else 0.08,
+                explore_weight=tuned_config.pair_explore_weight if tuned_config else 0.05,
+                fallback_base_weight=(
+                    tuned_config.pair_fallback_base_weight if tuned_config else 0.74
+                ),
+                fallback_ema_weight=(
+                    tuned_config.pair_fallback_ema_weight if tuned_config else 0.23
+                ),
+                fallback_explore_weight=(
+                    tuned_config.pair_fallback_explore_weight if tuned_config else 0.03
+                ),
             )
             row = rows.get(number)
             if row is not None:
@@ -628,7 +645,7 @@ def _evaluate_once(
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO_MIXED_V3.get(ticket_no, f"lane_{ticket_no}")
             elif strategy == "high_tier_v1":
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO_HIGH_TIER.get(ticket_no, f"high_tier_{ticket_no}")
-            elif strategy == "mixed_v2":
+            elif strategy in {"mixed_v2", "mixed_v2_tuned"}:
                 profile_name = LOTO7_PROFILE_BY_TICKET_NO_MIXED_V2.get(ticket_no, f"lane_{ticket_no}")
             elif strategy == "triple_weighted":
                 profile_name = f"triple_weighted_ticket_{ticket_no}"
@@ -1079,6 +1096,7 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
     else:
         candidate_strategy = strategy or "mixed_v3"
         is_high_tier_experiment = candidate_strategy == "high_tier_v1"
+        is_mixed_v2_tuned_experiment = candidate_strategy == "mixed_v2_tuned"
         comparison_hint = {
             "strategy_comparison_hint": {
                 "baseline_strategy": "mixed_v2",
@@ -1100,12 +1118,16 @@ def _print_batch_summary(results: list[dict[str, Any]]) -> None:
         adoption = {
             "adoption_recommendation": {
                 "candidate_strategy": candidate_strategy,
-                "baseline_strategy": "mixed_v2_fix",
+                "baseline_strategy": "mixed_v2",
                 "should_adopt": False,
                 "reason": (
                     "high_tier_v1 is experimental only; keep mixed_v3 unchanged and compare on holdout before adoption."
                     if is_high_tier_experiment
-                    else "Adopt only after 600-674 validation and 650-679 validation improve key metrics."
+                    else (
+                        "mixed_v2_tuned is experimental; adopt it only when it beats mixed_v2 on independent holdout draws."
+                        if is_mixed_v2_tuned_experiment
+                        else "Adopt only after validation and holdout improve key metrics."
+                    )
                 ),
             }
         }
@@ -1185,7 +1207,12 @@ def _write_jsonl(path: str, results: list[dict[str, Any]]) -> None:
                         f"{result['strategy']}:{ticket['profile_name']}:"
                         f"history{result['history_limit']}:draw{result['target_draw_no']}"
                     ),
-                    "profile_learning_candidate": result["strategy"] in {"mixed_loto6", "mixed_v2", "mixed_v3"},
+                    "profile_learning_candidate": result["strategy"] in {
+                        "mixed_loto6",
+                        "mixed_v2",
+                        "mixed_v2_tuned",
+                        "mixed_v3",
+                    },
                     "profile_role": {
                         **LOTO6_PROFILE_ROLES,
                         **PROFILE_ROLES,
@@ -1258,6 +1285,7 @@ def main() -> None:
             "mixed",
             "mixed_loto6",
             "mixed_v2",
+            "mixed_v2_tuned",
             "mixed_v3",
             "high_tier_v1",
             "triple_weighted",
@@ -1265,7 +1293,8 @@ def main() -> None:
         default="mixed",
         help=(
             "Prediction strategy to use. Available: default, mixed, mixed_loto6, "
-            "mixed_v2, mixed_v3, high_tier_v1 (experimental), triple_weighted"
+            "mixed_v2, mixed_v2_tuned (experimental), mixed_v3, "
+            "high_tier_v1 (experimental), triple_weighted"
         ),
     )
 
@@ -1320,6 +1349,7 @@ def main() -> None:
 
     if lottery_type == "loto6" and args.strategy in {
         "mixed_v2",
+        "mixed_v2_tuned",
         "triple_weighted",
         "pair_weighted",
         "ema_recency",
